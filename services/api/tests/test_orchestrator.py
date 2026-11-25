@@ -122,7 +122,8 @@ def test_request_id_forwarded_to_orchestrator():
     remote = orchestrator.RemoteOrchestrator("http://o", TOKEN)
     token = logging_setup.request_id_var.set("req-abc-12345")
     try:
-        assert remote._headers() == {"X-Internal-Token": TOKEN, "X-Request-ID": "req-abc-12345"}
+        h = remote._headers()
+        assert h["X-Internal-Token"] == TOKEN and h["X-Request-ID"] == "req-abc-12345"
     finally:
         logging_setup.request_id_var.reset(token)
         asyncio.run(remote.aclose())

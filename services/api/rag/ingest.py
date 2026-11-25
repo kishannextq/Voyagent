@@ -5,6 +5,7 @@ import hashlib
 import logging
 import os
 
+import metrics
 from rag import chunking, embeddings, extract
 from rag.store import DocumentRecord, RagStore
 
@@ -41,12 +42,15 @@ async def process(store: RagStore, doc_id: str, embedder: embeddings.Embedder | 
         payload = [(p.text, [(c, next(it)) for c in p.children]) for p in parents]
         await store.replace_chunks(doc_id, tenant_id, embedder.model_id, payload)
         await store.set_status(doc_id, "ready", chunk_count=len(children))
+        metrics.rag_ingests.labels("ready").inc()
         log.info("document_ingested", extra={"document_id": doc_id, "chunks": len(children), "model": embedder.model_id})
     except extract.Rejected as e:
         await store.set_status(doc_id, "failed", error=str(e))
+        metrics.rag_ingests.labels("failed").inc()
         log.warning("document_rejected", extra={"document_id": doc_id, "reason": str(e)})
     except Exception as e:
         await store.set_status(doc_id, "failed", error="Processing failed")
+        metrics.rag_ingests.labels("failed").inc()
         log.exception("document_ingest_failed", extra={"document_id": doc_id, "error_type": type(e).__name__})
 
 

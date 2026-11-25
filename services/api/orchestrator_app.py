@@ -25,8 +25,10 @@ from fastapi import Depends, FastAPI, HTTPException, Query, Request  # noqa: E40
 from fastapi.responses import StreamingResponse  # noqa: E402
 from pydantic import BaseModel, ConfigDict, Field  # noqa: E402
 
+import metrics  # noqa: E402
 import orchestrator  # noqa: E402
 import settings  # noqa: E402
+import telemetry  # noqa: E402
 
 log = logging.getLogger("voyagent.orchestrator_app")
 
@@ -40,6 +42,7 @@ _token = ""
 @asynccontextmanager
 async def lifespan(_: FastAPI):
     global orch, _token
+    metrics.start_server()
     _token = os.getenv("ORCHESTRATOR_TOKEN", "").strip()
     if not _token:
         if settings.durable_required():
@@ -69,6 +72,10 @@ async def _request_context(request: Request, call_next):
         return response
     finally:
         route = request.scope.get("route")
+        elapsed = time.perf_counter() - start
+        route_label = getattr(route, "path", "unmatched") if route is not None else "unmatched"
+        metrics.http_requests.labels("orchestrator", request.method, route_label, str(status)).inc()
+        metrics.http_duration.labels("orchestrator", route_label).observe(elapsed)
         log.info(
             "http_request",
             extra={
@@ -146,3 +153,5 @@ async def run(thread_id: str, body: RunRequest):
     except (KeyError, ValueError):
         raise HTTPException(status_code=422, detail="Invalid run payload") from None
     return StreamingResponse(stream, media_type="text/event-stream", headers={"Cache-Control": "no-cache"})
+
+telemetry.setup("orchestrator", app)

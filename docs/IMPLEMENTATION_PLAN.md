@@ -65,8 +65,9 @@ Updated continuously. `[x]` = implemented and verified (how is noted); `[ ]` = n
 - [ ] Bedrock Guardrails enabled (needs AWS)
 
 ## Phase 7 — Observability  (`feature/observability`)
-- [ ] OTel traces/metrics/logs across web → api → orchestrator → gateway
-- [ ] Alloy, Prometheus, Loki, Tempo, Grafana dashboards + alerts; Langfuse
+- [x] OTel traces api → orchestrator (spans for runs, agents, model/tool calls, document search; traceparent injected); Prometheus metrics on an internal port; trace ids in logs — 4 tests
+- [x] Collector, Prometheus, Loki, Tempo, Grafana in compose (`--profile observability`), provisioned datasources + dashboard, 9 alert rules (promtool-checked) — CI `observability` job verifies a cross-service trace in Tempo, metrics in Prometheus, logs in Loki and Grafana provisioning
+- [ ] Browser and gateway spans; Langfuse (needs a data-retention decision); token/cost metrics; alert routing
 
 ## Phase 8 — Infrastructure & delivery  (`feature/terraform-infrastructure`, `feature/cicd-deployment`)
 - [ ] Terraform modules; `validate`/`plan` for staging (no apply without authorization)

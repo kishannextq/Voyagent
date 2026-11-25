@@ -41,6 +41,9 @@ RAG: `RAG_ENABLED`, `RAG_EMBEDDER` (`gateway` in deployed envs; must match acros
 `RAG_EMBED_MODEL`, `RAG_EMBED_DIM` (fixed at migration time), `RAG_RERANKER`, `RAG_MAX_UPLOAD_BYTES`,
 `RAG_MAX_PDF_PAGES`, `MALWARE_SCAN_URL`, `RAG_REQUIRE_SCAN=true`. Worker: `python ingest_worker.py`.
 
+Telemetry: `OTEL_EXPORTER_OTLP_ENDPOINT` (traces; unset = off), `OTEL_SERVICE_NAME`, `METRICS_PORT`
+(9464; never expose publicly — scrape from inside the VPC).
+
 Model gateway: `LLM_GATEWAY_URL`, `LLM_GATEWAY_KEY` (API side; virtual key from
 `services/model-gateway/bootstrap.py`), `LLM_MODEL_FAST`/`LLM_MODEL_SMART` (aliases),
 `LLM_TIMEOUT_SECONDS`. Gateway side: `LITELLM_MASTER_KEY`, `LITELLM_DATABASE_URL`, `GROQ_API_KEY`,

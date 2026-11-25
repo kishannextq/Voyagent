@@ -20,14 +20,17 @@ from typing import Any, Protocol
 import httpx
 from langchain_core.messages import HumanMessage
 from langgraph.types import Command
+from opentelemetry import propagate
 
 import graph
 import keys
 import logging_setup
 import mcp_client
 import memory
+import metrics
 import redis_conn
 import run_store
+import telemetry
 from rag import store as rag_store
 from rag import tool as rag_tool
 
@@ -247,6 +250,10 @@ class LocalOrchestrator:
                 announced = True
             loop = asyncio.get_running_loop()
             deadline = loop.time() + self.timeout
+            kind = "resume" if not isinstance(graph_input, dict) else "start"
+            started, outcome = loop.time(), "error"
+            metrics.runs_active.inc()
+            span = telemetry.tracer.start_span("plan.run", attributes={"plan.kind": kind})
             chunks = self.graph.astream(graph_input, config=config(thread_id), stream_mode="updates")
             try:
                 while True:
@@ -275,10 +282,12 @@ class LocalOrchestrator:
                         await self.runs.save(thread_id, meta)
                         yield sse("fallback", run.fallback)
                 final = await self.snapshot(thread_id)
+                outcome = "interrupted" if final and final["status"] == "awaiting_approval" else "completed"
                 if remember and final and final["state"].get("approved"):
                     await self.memory.put(end_user, memory.extract(final["state"]))
                 yield sse("done", final)
             except TimeoutError:
+                outcome = "timeout"
                 log.warning("graph_run_timeout", extra={"thread_id": thread_id, "timeout_s": self.timeout})
                 yield sse("error", {"message": f"The plan took longer than {self.timeout:.0f}s and was stopped."})
             except Exception as exc:  # surface errors to the UI instead of dropping the stream
@@ -286,6 +295,11 @@ class LocalOrchestrator:
                 yield sse("error", {"message": keys.redact(str(exc), api_keys)})
             finally:
                 await chunks.aclose()
+                metrics.runs_active.dec()
+                metrics.runs.labels(kind, outcome).inc()
+                metrics.run_duration.labels(kind).observe(loop.time() - started)
+                span.set_attribute("plan.outcome", outcome)
+                span.end()
 
 
 class RemoteOrchestrator:
@@ -305,6 +319,7 @@ class RemoteOrchestrator:
         rid = logging_setup.request_id_var.get()
         if rid:
             h["X-Request-ID"] = rid  # one request ID across services
+        propagate.inject(h)  # W3C traceparent: one trace across services (no-op without an active span)
         return h
 
     async def aclose(self) -> None:

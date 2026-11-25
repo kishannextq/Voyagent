@@ -18,6 +18,8 @@ from dataclasses import dataclass, field
 import yaml
 from pydantic import BaseModel, ConfigDict
 
+import metrics
+
 log = logging.getLogger("voyagent.guardrails")
 
 POLICY_PATH = pathlib.Path(__file__).parent / "policy.yaml"
@@ -138,10 +140,12 @@ def check_input(text: str) -> InputVerdict:
     for rule_id, pattern in _BLOCK:
         if pattern.search(norm):
             log.warning("guardrail_input_blocked", extra={"rule": rule_id})
+            metrics.guardrail_events.labels("input_blocked", rule_id).inc()
             return InputVerdict(False, text, rule_id)
     clean, found = redact(text, POLICY.input.redact_pii)
     if found:
         log.info("guardrail_input_redacted", extra={"pii": sorted(set(found))})
+        metrics.guardrail_events.labels("input_redacted", "pii").inc()
     return InputVerdict(True, clean, None, found)
 
 
@@ -159,6 +163,7 @@ WITHHELD = "This response was withheld by the content policy. Please try rephras
 def check_output(text: str) -> OutputVerdict:
     if POLICY.output.canary.lower() in normalise(text):
         log.error("guardrail_output_leak", extra={"rule": "canary"})
+        metrics.guardrail_events.labels("output_withheld", "canary").inc()
         return OutputVerdict(WITHHELD, withheld=True)
     text = text[: POLICY.output.max_chars]
     text, found = redact(text, POLICY.output.redact_pii)
@@ -174,6 +179,7 @@ def check_output(text: str) -> OutputVerdict:
     text = _LINK.sub(link, text)
     if found or removed:
         log.info("guardrail_output_cleaned", extra={"pii": sorted(set(found)), "links_removed": removed})
+        metrics.guardrail_events.labels("output_cleaned", "pii_or_link").inc()
     return OutputVerdict(text, False, found, removed)
 
 

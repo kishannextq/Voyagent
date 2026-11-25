@@ -8,7 +8,9 @@ from langgraph.types import interrupt
 import agent_config
 import guardrails
 import keys
+import metrics
 import mock
+import telemetry
 from config import get_llm
 from mcp_client import current_weather, forecast, list_airlines, list_airports, tavily_search
 from rag.tool import search_documents
@@ -22,20 +24,25 @@ async def _llm_text(system: str, prompt: str, role: str | None = None) -> str:
     """One model call for the current agent: counted against its budgets (agent_config), with the
     shared soul + agent persona prepended to `system`, on the agent's model unless overridden."""
     agent_config.count_llm_call(keys.run_state())
+    role = role or agent_config.model_role()
     if not keys.is_live("groq"):
         # No usable Groq key for this run (missing, or an earlier live call failed): dummy data.
         keys.use_dummy()
+        metrics.llm_calls.labels(role, "mock").inc()
         return await mock.fake_llm_text(system, prompt)
     try:
-        llm = get_llm(keys.current().groq, role or agent_config.model_role())
+        llm = get_llm(keys.current().groq, role)
         if keys.end_user():
             llm = llm.bind(user=keys.end_user())  # gateway attributes spend and budgets to this user
-        response = await llm.ainvoke(
-            [
-                SystemMessage(content=agent_config.system_prompt(system)),
-                HumanMessage(content=prompt),
-            ]
-        )
+        with telemetry.tracer.start_as_current_span("llm.call", attributes={"llm.role": role}):
+            with metrics.llm_duration.labels(role).time():
+                response = await llm.ainvoke(
+                    [
+                        SystemMessage(content=agent_config.system_prompt(system)),
+                        HumanMessage(content=prompt),
+                    ]
+                )
+        metrics.llm_calls.labels(role, "live").inc()
         # Output rails: withhold system-prompt leaks, redact PII, drop unsafe links.
         return guardrails.check_output(str(response.content)).text
     except Exception as exc:
@@ -47,6 +54,7 @@ async def _llm_text(system: str, prompt: str, role: str | None = None) -> str:
         msg = fallback_message("groq", status, detail)
         log.warning("llm_fallback", extra={"provider": "groq", "status": status, "reason": msg})
         keys.trigger_fallback("llm", msg)
+        metrics.llm_calls.labels(role, "fallback").inc()
         return await mock.fake_llm_text(system, prompt)
 
 def _memory_note(state: TravelState) -> str:

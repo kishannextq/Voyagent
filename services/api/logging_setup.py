@@ -45,6 +45,15 @@ def redact(text: str) -> str:
     return text
 
 
+def _trace_ids():
+    try:
+        from opentelemetry import trace
+    except ImportError:  # pragma: no cover
+        return None
+    ctx = trace.get_current_span().get_span_context()
+    return (format(ctx.trace_id, "032x"), format(ctx.span_id, "016x")) if ctx.is_valid else None
+
+
 class JsonFormatter(logging.Formatter):
     def __init__(self, service: str):
         super().__init__()
@@ -61,6 +70,9 @@ class JsonFormatter(logging.Formatter):
         request_id = request_id_var.get()
         if request_id:
             entry["request_id"] = request_id
+        ids = _trace_ids()
+        if ids:
+            entry["trace_id"], entry["span_id"] = ids
         for key, value in record.__dict__.items():
             if key not in _STD_ATTRS and not key.startswith("_"):
                 entry[key] = value

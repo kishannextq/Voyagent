@@ -5,6 +5,8 @@ import os
 
 import agent_config
 import keys
+import metrics
+import telemetry
 from rag import retrieval
 from rag.store import RagStore
 
@@ -33,9 +35,12 @@ async def search_documents(query: str, k: int = 4) -> str:
     if not (enabled() and _store and tenant):
         return ""
     try:
-        passages = await retrieval.search(_store, tenant, query, k=k)
+        with telemetry.tracer.start_as_current_span("rag.search"):
+            passages = await retrieval.search(_store, tenant, query, k=k)
     except Exception as e:
         log.warning("rag_search_failed", extra={"error_type": type(e).__name__})
+        metrics.rag_searches.labels("error").inc()
         return ""
+    metrics.rag_searches.labels("hits" if passages else "empty").inc()
     log.info("rag_search", extra={"hits": len(passages)})
     return retrieval.format_for_prompt(passages)

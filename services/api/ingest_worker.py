@@ -14,7 +14,9 @@ import logging_setup
 
 logging_setup.configure("ingest-worker")
 
+import metrics  # noqa: E402
 import redis_conn  # noqa: E402
+import telemetry  # noqa: E402
 from rag import ingest  # noqa: E402
 from rag import store as rag_store  # noqa: E402
 
@@ -22,6 +24,8 @@ log = logging.getLogger("voyagent.ingest_worker")
 
 
 async def run(stop: asyncio.Event) -> None:
+    metrics.start_server()
+    telemetry.setup("ingest-worker")
     redis = await redis_conn.connect()
     if redis is None:
         raise RuntimeError("REDIS_URL is required for the ingest worker")

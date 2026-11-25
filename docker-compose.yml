@@ -74,6 +74,8 @@ services:
       CHECKPOINTER_SETUP: "false"  # done by the migrate service
       ORCHESTRATOR_TOKEN: ${ORCHESTRATOR_TOKEN:-local-only-orchestrator-token}
       LLM_GATEWAY_URL: ${LLM_GATEWAY_URL:-}
+      METRICS_PORT: "9464"
+      OTEL_EXPORTER_OTLP_ENDPOINT: ${OTEL_EXPORTER_OTLP_ENDPOINT:-}
       RAG_EMBEDDER: ${RAG_EMBEDDER:-hash}
       LLM_GATEWAY_KEY: ${LLM_GATEWAY_KEY:-}
     healthcheck:
@@ -96,6 +98,8 @@ services:
       RAG_EMBEDDER: ${RAG_EMBEDDER:-hash}
       LLM_GATEWAY_URL: ${LLM_GATEWAY_URL:-}
       LLM_GATEWAY_KEY: ${LLM_GATEWAY_KEY:-}
+      METRICS_PORT: "9464"
+      OTEL_EXPORTER_OTLP_ENDPOINT: ${OTEL_EXPORTER_OTLP_ENDPOINT:-}
     depends_on:
       migrate: { condition: service_completed_successfully }
       redis: { condition: service_healthy }
@@ -114,6 +118,8 @@ services:
       COGNITO_USER_POOL_ID: ${COGNITO_USER_POOL_ID:-}
       COGNITO_CLIENT_IDS: ${COGNITO_CLIENT_IDS:-}
       ORCHESTRATOR_URL: http://orchestrator:8001
+      METRICS_PORT: "9464"
+      OTEL_EXPORTER_OTLP_ENDPOINT: ${OTEL_EXPORTER_OTLP_ENDPOINT:-}
       RAG_EMBEDDER: ${RAG_EMBEDDER:-hash}
       ORCHESTRATOR_TOKEN: ${ORCHESTRATOR_TOKEN:-local-only-orchestrator-token}
     ports: ["127.0.0.1:8000:8000"]
@@ -138,6 +144,57 @@ services:
       PGADMIN_DEFAULT_PASSWORD: ${PGADMIN_DEFAULT_PASSWORD:-local_only}
     ports: ["127.0.0.1:5050:80"]
     depends_on: [postgres]
+
+  # ---- Observability (docker compose --profile observability up; set
+  # OTEL_EXPORTER_OTLP_ENDPOINT=http://otel-collector:4318 for the app services) ----
+  otel-collector:
+    profiles: ["observability"]
+    image: otel/opentelemetry-collector-contrib:0.165.0
+    command: ["--config=/etc/otelcol/config.yaml"]
+    user: "0"  # reads Docker's container log files (local/CI only)
+    volumes:
+      - ./infra/observability/otel-collector/config.yaml:/etc/otelcol/config.yaml:ro
+      - /var/lib/docker/containers:/var/lib/docker/containers:ro
+    ports: ["127.0.0.1:4318:4318"]
+
+  prometheus:
+    profiles: ["observability"]
+    image: prom/prometheus:v3.16.0
+    volumes:
+      - ./infra/observability/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - ./infra/observability/prometheus/alerts.yml:/etc/prometheus/alerts.yml:ro
+    ports: ["127.0.0.1:9090:9090"]
+
+  loki:
+    profiles: ["observability"]
+    image: grafana/loki:3.7.9
+    command: ["-config.file=/etc/loki/config.yaml"]
+    user: "0"  # writes to the local volume (local/CI only)
+    volumes:
+      - ./infra/observability/loki/config.yaml:/etc/loki/config.yaml:ro
+    ports: ["127.0.0.1:3100:3100"]
+
+  tempo:
+    profiles: ["observability"]
+    image: grafana/tempo:2.10.10
+    command: ["-config.file=/etc/tempo/config.yaml"]
+    user: "0"  # writes to the local volume (local/CI only)
+    volumes:
+      - ./infra/observability/tempo/config.yaml:/etc/tempo/config.yaml:ro
+    ports: ["127.0.0.1:3200:3200"]
+
+  grafana:
+    profiles: ["observability"]
+    image: grafana/grafana:13.3.1
+    environment:
+      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_ADMIN_PASSWORD:-local_only}
+      GF_AUTH_ANONYMOUS_ENABLED: "false"
+      GF_ANALYTICS_REPORTING_ENABLED: "false"
+    volumes:
+      - ./infra/observability/grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./infra/observability/grafana/dashboards:/var/lib/grafana/dashboards:ro
+    ports: ["127.0.0.1:3001:3000"]
+    depends_on: [prometheus, loki, tempo]
 
 volumes:
   pgdata:

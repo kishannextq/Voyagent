@@ -1,0 +1,44 @@
+# Voyagent content policy (loaded by guardrails/__init__.py; validated at startup).
+# Deterministic rails run before and after every model call. The LLM guardrail in the supervisor
+# is a second layer, not the only one (SECURITY.md F5).
+
+input:
+  max_chars: 2000
+  # Prompt injection / jailbreak: matched case-insensitively on normalised text. Each has an id
+  # that is logged (never the user's text).
+  block_patterns:
+    - id: ignore-instructions
+      regex: '\b(ignore|disregard|forget|override)\b.{0,40}\b(previous|prior|above|earlier|all|system|your)\b.{0,30}\b(instructions?|prompts?|rules|directions|guidelines)\b'
+    # Same intent in other common languages (FR, ES, PT, IT, DE).
+    - id: ignore-instructions-multilingual
+      regex: '\b(ignor\w*|olvid\w*|oubli\w*|esque[cç]\w*|dimentic\w*|vergiss\w*)\b.{0,50}\b(instructions?|instruc\w*|instru[cç][oõ]\w*|istruzion\w*|anweisung\w*|consignes?|reglas|r[eè]gles|regeln)\b'
+    - id: reveal-prompt-multilingual
+      regex: '\b(prompt|invite|instructions?|instrucciones|anweisungen)\s+(du |de |del |do |di |des )?(syst[eè]me|sistema|systems?)\b'
+    - id: reveal-prompt
+      regex: '\b(reveal|show|print|repeat|output|tell me|what is|what are|leak|dump)\b.{0,40}\b(system|hidden|initial|developer|secret)\s+(prompt|instructions?|message|rules)\b'
+    - id: role-override
+      regex: '\b(you are now|from now on you are|act as|pretend (to be|you are)|roleplay as|you will now be)\b.{0,60}\b(dan|developer mode|jailbr\w*|unfiltered|uncensored|evil|no (rules|restrictions|limits)|without (rules|restrictions|limits))\b'
+    - id: jailbreak-names
+      regex: '\b(do anything now|developer mode enabled|jailbreak(ing)?|dan mode|aim mode|stan prompt)\b'
+    - id: fake-role-tags
+      regex: '(<\s*/?\s*(system|assistant|im_start|im_end)\s*>|<\|\s*(im_start|im_end|system|endoftext)\s*\|>|\[/?(system|inst)\]|^\s*(system|assistant)\s*:)'
+    - id: prompt-delimiter-escape
+      regex: '(</?documents>|```\s*system|-----\s*end of (system|instructions))'
+    - id: exfiltration
+      regex: '\b(api[_ -]?keys?|secret keys?|environment variables?|env vars?|credentials)\b.{0,40}\b(print|show|reveal|send|give|list|dump|leak)\b|\b(print|show|reveal|send|give|list|dump|leak)\b.{0,40}\b(api[_ -]?keys?|secret keys?|environment variables?|env vars?|(your|the|system|server|database|api|admin)\s+credentials)\b'
+    - id: code-execution
+      regex: '\b(run|execute|eval)\b.{0,30}\b(shell|bash|python|code|command|script)\b|\b(rm -rf|curl\s+http|wget\s+http|os\.system|subprocess)\b'
+  # PII the planner never needs: redacted before the text reaches a model, a log or storage.
+  redact_pii: [email, phone, card, iban, passport]
+
+output:
+  max_chars: 20000
+  # Canary embedded in the system prompt (agents/soul.md). If it shows up in output, the
+  # system prompt leaked: the output is withheld.
+  canary: "VG-CANARY-7f3a91"
+  redact_pii: [email, card, iban, passport]
+  # Links in model output must be plain web links.
+  allowed_link_schemes: [https, http]
+
+tool_output:
+  max_chars: 6000

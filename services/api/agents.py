@@ -6,6 +6,7 @@ from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
 from langgraph.types import interrupt
 
 import agent_config
+import guardrails
 import keys
 import mock
 from config import get_llm
@@ -35,7 +36,8 @@ async def _llm_text(system: str, prompt: str, role: str | None = None) -> str:
                 HumanMessage(content=prompt),
             ]
         )
-        return response.content
+        # Output rails: withhold system-prompt leaks, redact PII, drop unsafe links.
+        return guardrails.check_output(str(response.content)).text
     except Exception as exc:
         # Rejected key, rate limit, network...: don't stop the plan; continue with dummy data.
         status = getattr(exc, "status_code", None)

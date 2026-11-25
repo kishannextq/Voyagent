@@ -1,8 +1,8 @@
 import psycopg
-from psycopg.rows import dict_row
 from langgraph.checkpoint.memory import MemorySaver
 from langgraph.checkpoint.postgres import PostgresSaver
 from langgraph.graph import END, START, StateGraph
+from psycopg.rows import dict_row
 
 from agents import (
     budget_agent,

@@ -1,0 +1,21 @@
+# syntax=docker/dockerfile:1.7
+# Voyagent API — FastAPI + LangGraph. Multi-stage: build venv with uv, run as non-root.
+
+FROM python:3.13-slim AS build
+COPY --from=ghcr.io/astral-sh/uv:0.13.7 /uv /usr/local/bin/uv
+ENV UV_COMPILE_BYTECODE=1 UV_LINK_MODE=copy UV_PYTHON_DOWNLOADS=never
+WORKDIR /app
+COPY pyproject.toml uv.lock ./
+RUN --mount=type=cache,target=/root/.cache/uv uv sync --frozen --no-dev
+COPY *.py ./
+
+FROM python:3.13-slim AS runtime
+RUN groupadd --system app && useradd --system --gid app --home-dir /app app
+WORKDIR /app
+COPY --from=build --chown=app:app /app /app
+ENV PATH="/app/.venv/bin:$PATH" PYTHONUNBUFFERED=1 PYTHONDONTWRITEBYTECODE=1 PORT=8000
+USER app
+EXPOSE 8000
+HEALTHCHECK --interval=15s --timeout=3s --start-period=20s --retries=3 \
+  CMD python -c "import os,urllib.request; urllib.request.urlopen(f'http://127.0.0.1:{os.environ[\"PORT\"]}/api/health', timeout=2)"
+CMD ["sh", "-c", "exec uvicorn server:api --host 0.0.0.0 --port ${PORT} --proxy-headers --forwarded-allow-ips='*'"]

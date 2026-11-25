@@ -36,7 +36,7 @@ SERVICE_KEYS = {
     "weather": "openweather",
 }
 
-_current: ContextVar[ApiKeys] = ContextVar("api_keys", default=ApiKeys())
+_current: ContextVar[ApiKeys] = ContextVar("api_keys", default=ApiKeys())  # noqa: B039 - frozen dataclass, immutable
 
 
 def server_keys() -> ApiKeys:

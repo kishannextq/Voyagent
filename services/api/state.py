@@ -1,6 +1,8 @@
-from typing import Annotated, Any, TypedDict
 import operator
+from typing import Annotated, Any, TypedDict
+
 from langchain_core.messages import AnyMessage
+
 
 class TravelState(TypedDict, total=False):
     messages: Annotated[list[AnyMessage], operator.add]

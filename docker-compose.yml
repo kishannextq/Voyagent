@@ -1,0 +1,67 @@
+# Local development stack. Usage:
+#   cp .env.example .env
+#   docker compose up --build            # web :3000, api :8000, postgres :5432, redis :6379
+#   docker compose --profile tools up    # + pgAdmin :5050
+# Postgres uses the pgvector image so the RAG phase needs no image change.
+
+name: voyagent
+
+services:
+  postgres:
+    image: pgvector/pgvector:pg17
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-voyagent}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-voyagent_local_only}
+      POSTGRES_DB: ${POSTGRES_DB:-voyagent}
+    ports: ["127.0.0.1:5432:5432"]
+    volumes: [pgdata:/var/lib/postgresql/data]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  redis:
+    image: redis:7.4-alpine
+    command: ["redis-server", "--save", "", "--appendonly", "no"]
+    ports: ["127.0.0.1:6379:6379"]
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  api:
+    build: ./services/api
+    env_file:
+      - path: .env
+        required: false
+    environment:
+      DATABASE_URL: postgresql://${POSTGRES_USER:-voyagent}:${POSTGRES_PASSWORD:-voyagent_local_only}@postgres:5432/${POSTGRES_DB:-voyagent}
+      MOCK_MODE: ${MOCK_MODE:-true}
+      FRONTEND_ORIGINS: ${FRONTEND_ORIGINS:-http://localhost:3000}
+    ports: ["127.0.0.1:8000:8000"]
+    depends_on:
+      postgres: { condition: service_healthy }
+      redis: { condition: service_healthy }
+
+  web:
+    build:
+      context: ./apps/web
+      args:
+        NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL:-http://localhost:8000}
+    ports: ["127.0.0.1:3000:3000"]
+    depends_on:
+      api: { condition: service_healthy }
+
+  pgadmin:
+    image: dpage/pgadmin4:8
+    profiles: ["tools"]
+    environment:
+      PGADMIN_DEFAULT_EMAIL: ${PGADMIN_DEFAULT_EMAIL:-admin@example.com}
+      PGADMIN_DEFAULT_PASSWORD: ${PGADMIN_DEFAULT_PASSWORD:-local_only}
+    ports: ["127.0.0.1:5050:80"]
+    depends_on: [postgres]
+
+volumes:
+  pgdata:

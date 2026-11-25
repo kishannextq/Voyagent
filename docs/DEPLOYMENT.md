@@ -31,6 +31,10 @@ cd apps/web && npx tsc --noEmit && npm run build
 | staging | pre-prod validation | AWS account `staging` (Terraform) | synthetic |
 | production | customers | AWS account `prod` (Terraform) | real, backed up |
 
+API runtime settings: `APP_ENV` (`staging`/`production` require `DATABASE_URL` and `REDIS_URL`),
+`FRONTEND_ORIGINS` (comma-separated, required in deployed envs), optional `FRONTEND_ORIGIN_REGEX`,
+`CHECKPOINTER_SETUP=false` on services (run setup as a migration task), `PG_POOL_MAX`, `LOG_LEVEL`.
+
 Separate AWS accounts per environment (AWS Organizations). Config via env vars; secrets from
 Secrets Manager; no `.env` files beyond local.
 

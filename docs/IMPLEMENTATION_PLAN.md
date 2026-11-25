@@ -22,10 +22,11 @@ Updated continuously. `[x]` = implemented and verified (how is noted); `[ ]` = n
 - [x] 128-bit server thread IDs without user ID; client IDs validated, 409 on existing thread (F2, partial)
 - [x] Pooled Postgres checkpointer; unreachable DB fails startup; memory only for unset URL in local/test (F10) — integration test runs in CI only (not yet executed: no push access, no local Docker)
 - [ ] Async graph execution; reuse MCP sessions instead of spawning per call (F7)
-- [ ] MCP subprocess gets a minimal env, not the full process env (F11); Tavily key out of URL (F12)
+- [x] MCP subprocess gets a minimal env (F11); Tavily key in Authorization header (F12, live call unverified)
 - [ ] `/api/v1` versioned routes; old routes kept until web migrates
 - [ ] Cognito JWT validation, RBAC, tenant model; server-generated unguessable thread IDs scoped to tenant/user (F2)
-- [ ] Strict CORS (F8); request size limits; rate limiting (Redis)
+- [x] Strict CORS (F8)
+- [ ] Request body size limit at the edge/ASGI; rate limiting (Redis)
 - [ ] Alembic migrations for application tables
 
 ## Phase 3 — Model gateway  (`feature/model-gateway`)

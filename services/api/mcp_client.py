@@ -25,21 +25,35 @@ PROJECT_DIR = Path(__file__).resolve().parent
 # if you run them from a separate environment.
 AVIATIONSTACK_MCP_PYTHON = os.getenv("AVIATIONSTACK_MCP_PYTHON", sys.executable)
 WEATHER_MCP_PYTHON = os.getenv("WEATHER_MCP_PYTHON", sys.executable)
+TAVILY_MCP_URL = os.getenv("TAVILY_MCP_URL", "https://mcp.tavily.com/mcp/")
 WEATHER_MCP_SCRIPT = os.getenv("WEATHER_MCP_SCRIPT", str(PROJECT_DIR / "weather_mcp_server.py"))
 
 
+# Only what a Python subprocess needs to start; nothing else from our environment
+# (which holds every provider key and the database URL) reaches tool servers.
+_PASSTHROUGH_ENV = (
+    "PATH", "SYSTEMROOT", "SYSTEMDRIVE", "WINDIR", "COMSPEC", "PATHEXT",  # Windows process basics
+    "HOME", "USERPROFILE", "TMPDIR", "TEMP", "TMP", "LANG", "LC_ALL",
+    "SSL_CERT_FILE", "REQUESTS_CA_BUNDLE",  # custom CA bundles
+    "HTTPS_PROXY", "HTTP_PROXY", "NO_PROXY",
+)
+
+
 def _server_env(**extra: str) -> dict[str, str]:
-    """Environment for a stdio MCP server: inherit ours, add the request's API key."""
-    env = dict(os.environ)
+    """Minimal environment for a stdio MCP server: process basics + that server's own key only."""
+    env = {k: os.environ[k] for k in _PASSTHROUGH_ENV if k in os.environ}
+    env["PYTHONUNBUFFERED"] = "1"
     env.update(extra)
     return env
 
 
 def _connection(service: str, key: str) -> dict:
     if service == "tavily":
+        # Key in a header, not the URL: URLs end up in proxy/access logs (SECURITY.md F12).
         return {
             "transport": "streamable_http",
-            "url": f"https://mcp.tavily.com/mcp/?tavilyApiKey={key}",
+            "url": TAVILY_MCP_URL,
+            "headers": {"Authorization": f"Bearer {key}"},
         }
     if service == "aviationstack":
         return {
@@ -59,7 +73,7 @@ def _connection(service: str, key: str) -> dict:
     raise ValueError(f"Unknown MCP service: {service}")
 
 
-# (service, key) -> loaded tools. Bounded so user-supplied keys don't pile up.
+# (service, key) -> loaded tools. Bounded in case keys rotate while the process runs.
 _tools_cache: dict[tuple[str, str], list] = {}
 _MAX_CACHED = 64
 

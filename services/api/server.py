@@ -58,23 +58,23 @@ api = FastAPI(
     description="LangGraph supervisor + specialist agents with human-in-the-loop approval.",
 )
 
+# CORS (SECURITY.md F8): explicit origins from env (defaults are local dev only), explicit
+# methods/headers, and no credentialed requests: auth uses bearer tokens, not cookies.
 origins = [
     o.strip()
-    for o in os.getenv(
-        "FRONTEND_ORIGINS",
-        "http://localhost:3000,http://127.0.0.1:3000,https://voyagent-lime.vercel.app",
-    ).split(",")
-    if o.strip()
+    for o in os.getenv("FRONTEND_ORIGINS", "http://localhost:3000,http://127.0.0.1:3000").split(",")
+    if o.strip() and o.strip() != "*"
 ]
 api.add_middleware(
     CORSMiddleware,
     allow_origins=origins,
-    # e.g. FRONTEND_ORIGIN_REGEX=https://my-app-.*\.vercel\.app for Vercel preview deployments
-    # Default also allows this project's Vercel preview/deployment URLs.
-    allow_origin_regex=os.getenv("FRONTEND_ORIGIN_REGEX", r"https://voyagent-[a-z0-9]+-kishan-18fd\.vercel\.app") or None,
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
+    # e.g. FRONTEND_ORIGIN_REGEX=https://voyagent-[a-z0-9]+-team\.vercel\.app for preview deployments
+    allow_origin_regex=os.getenv("FRONTEND_ORIGIN_REGEX") or None,
+    allow_credentials=False,
+    allow_methods=["GET", "POST", "OPTIONS"],
+    allow_headers=["Content-Type", "Accept", "Authorization", "X-Request-ID"],
+    expose_headers=["X-Request-ID"],
+    max_age=600,
 )
 
 

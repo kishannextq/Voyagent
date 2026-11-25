@@ -35,6 +35,7 @@ TOOL_IDS = {
     "tavily.tavily_search",
     "openweather.get_current_weather",
     "openweather.get_forecast",
+    "rag.search",
 }
 
 

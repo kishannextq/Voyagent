@@ -101,6 +101,7 @@ class RunRequest(BaseModel):
     kind: Literal["start", "resume"]
     payload: dict
     end_user: str = Field("", max_length=300)
+    tenant_id: str = Field("", max_length=200)
 
 
 @app.get("/internal/v1/health")
@@ -139,7 +140,7 @@ async def delete_memory(owner: str = Query(..., min_length=1, max_length=300)):
 @app.post("/internal/v1/threads/{thread_id}/runs", dependencies=[Depends(internal_auth)])
 async def run(thread_id: str, body: RunRequest):
     try:
-        stream = await orch.start(_thread(thread_id), body.kind, body.payload, body.end_user)
+        stream = await orch.start(_thread(thread_id), body.kind, body.payload, body.end_user, body.tenant_id)
     except orchestrator.Busy:
         raise HTTPException(status_code=503, detail="Busy", headers={"Retry-After": "5"}) from None
     except (KeyError, ValueError):

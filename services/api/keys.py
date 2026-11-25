@@ -130,6 +130,18 @@ def end_user() -> str:
     return _end_user.get()
 
 
+_tenant: ContextVar[str] = ContextVar("tenant", default="")
+
+
+def set_tenant(tenant_id: str) -> None:
+    """Caller's tenant for this run: scopes document retrieval (rag.tool)."""
+    _tenant.set(tenant_id)
+
+
+def tenant() -> str:
+    return _tenant.get()
+
+
 def set_current(keys: ApiKeys):
     return _current.set(keys)
 

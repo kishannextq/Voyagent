@@ -50,11 +50,13 @@ Updated continuously. `[x]` = implemented and verified (how is noted); `[ ]` = n
 - [x] Long-term memory: allow-listed preferences from approved plans, 180-day expiry, `GET/DELETE /api/v1/me/memory`, opt-out flag; `DELETE /api/v1/plans/{id}`; `maintenance.py purge` (expired memory + plans older than `PLAN_RETENTION_DAYS`) — 7 tests incl. Postgres
 
 ## Phase 5 — RAG  (`feature/rag-engine`, `feature/document-processing`)
-- [ ] Ingestion: S3 upload, validation, malware scan hook, extraction/OCR, dedupe, versioning, status
-- [ ] Chunking strategies benchmarked; parent-child retrieval
-- [ ] Embedding abstraction (Bedrock Titan/Cohere, HF) with versioning
-- [ ] Hybrid retrieval (pgvector + full-text), tenant filters, reranking, citations
-- [ ] Evaluation harness: Recall@K, Precision@K, MRR, NDCG, faithfulness; golden dataset
+- [x] Ingestion: upload API (tenant admins), content-based type detection (PDF/Markdown/text), size/page limits, malware-scan hook (`MALWARE_SCAN_URL`, `RAG_REQUIRE_SCAN`), extraction, sha256 dedupe, title versioning (older versions superseded), status pipeline; Redis queue + `ingest_worker.py` (in-process locally)
+- [ ] S3 object storage for originals (bytes in Postgres ≤5 MiB for now); OCR for scanned PDFs; SQS instead of Redis in AWS
+- [x] Chunking strategies benchmarked (fixed-400, fixed-1000, parent-2000/child-400); parent-child retrieval — `docs/RAG_EVALUATION.md`
+- [x] Embedding abstraction with model id stored per vector: `gateway` (deployed; Bedrock/Cohere alias in LiteLLM, **not verified**), `fastembed` bge-small (local/CI eval), `hash` (tests)
+- [x] Hybrid retrieval (pgvector HNSW + Postgres full-text, RRF), mandatory tenant filter, optional cross-encoder rerank, parent expansion, citations [n]; budget + itinerary agents use it via allow-listed `rag.search`
+- [x] Evaluation harness: Recall@K, Precision@K, MRR, NDCG on a golden set; citation-support check; CI `rag-eval` job with the semantic embedder and a quality gate
+- [ ] Model-graded faithfulness judge; larger, harder golden set (current one saturates)
 
 ## Phase 6 — Guardrails  (`feature/guardrails`)
 - [ ] Input/output rails library; Bedrock Guardrails; dialogue rails config

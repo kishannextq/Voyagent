@@ -9,6 +9,8 @@ COPY pyproject.toml uv.lock ./
 RUN --mount=type=cache,target=/root/.cache/uv uv sync --frozen --no-dev
 COPY *.py alembic.ini ./
 COPY migrations ./migrations
+COPY agents ./agents
+COPY rag ./rag
 
 FROM python:3.13-slim AS runtime
 # OS security updates; drop pip (not needed at runtime; its vendored libs carry CVEs).

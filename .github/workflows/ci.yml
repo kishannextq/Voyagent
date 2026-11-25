@@ -150,6 +150,29 @@ jobs:
         if: failure()
         run: docker logs gateway | tail -100; cat mock-llm.log | tail -30
 
+  # Retrieval quality with a real semantic embedder (downloads bge-small, ~70 MB).
+  rag-eval:
+    needs: changes
+    if: needs.changes.outputs.api == 'true'
+    runs-on: ubuntu-latest
+    defaults: { run: { working-directory: services/api } }
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+        with:
+          version: "0.13.7"
+          enable-cache: true
+          cache-dependency-glob: services/api/uv.lock
+      - run: uv sync --frozen --group rag-local
+      - name: Evaluate (fastembed, k=3)
+        env: { RAG_EMBEDDER: fastembed }
+        run: |
+          uv run python -m rag.eval 3 | tee eval.md
+          echo "## Retrieval evaluation" >> "$GITHUB_STEP_SUMMARY"
+          cat eval.md >> "$GITHUB_STEP_SUMMARY"
+          # quality gate: hybrid + parent/child must keep Recall@3 = 1.0 and MRR >= 0.9
+          grep -E '^\| parent-2000/child-400 \| hybrid \| 1\.0 \| [0-9.]+ \| (0\.9[0-9]*|1\.0) \|' eval.md
+
   secrets-scan:
     runs-on: ubuntu-latest
     steps:
@@ -179,6 +202,30 @@ jobs:
           tags: voyagent-${{ matrix.service.name }}:ci
           cache-from: type=gha,scope=${{ matrix.service.name }}
           cache-to: type=gha,mode=max,scope=${{ matrix.service.name }}
+      - name: Smoke test (start the container, hit its health endpoint)
+        run: |
+          set -e
+          if [ "${{ matrix.service.name }}" = "api" ]; then
+            # public api (in-process orchestrator) and the internal orchestrator command
+            docker run -d --name svc -p 8000:8000 -e MOCK_MODE=true voyagent-api:ci
+            docker run -d --name orch -p 8001:8001 -e MOCK_MODE=true voyagent-api:ci               sh -c "exec uvicorn orchestrator_app:app --host 0.0.0.0 --port 8001"
+            for i in $(seq 1 30); do
+              curl -sf http://127.0.0.1:8000/api/v1/health > /dev/null && curl -sf http://127.0.0.1:8001/internal/v1/health > /dev/null && break
+              sleep 2
+            done
+            curl -sf http://127.0.0.1:8000/api/v1/health
+            curl -sf http://127.0.0.1:8001/internal/v1/health
+            # a real plan through the container (mock mode)
+            curl -sf -X POST http://127.0.0.1:8000/api/v1/plan -H 'content-type: application/json'               -d '{"query":"3 days in Rome"}' | grep -q awaiting_approval
+            docker run --rm voyagent-api:ci python -c "import agent_config, rag.retrieval, migrate, maintenance, ingest_worker; print('imports ok')"
+          else
+            docker run -d --name svc -p 3000:3000 voyagent-web:ci
+            for i in $(seq 1 30); do curl -sf http://127.0.0.1:3000/ > /dev/null && break; sleep 2; done
+            curl -sf http://127.0.0.1:3000/ | grep -q Voyagent
+          fi
+      - name: Container logs
+        if: failure()
+        run: docker logs svc 2>&1 | tail -80; docker logs orch 2>&1 | tail -40 || true
       - name: Scan image (Trivy, fail on HIGH/CRITICAL with fixes)
         uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0 (pinned by SHA)
         with:

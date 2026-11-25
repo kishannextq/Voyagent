@@ -25,6 +25,8 @@ dependencies = [
     "sqlalchemy==2.1.8",
     "langchain-openai==1.7.4",
     "pyyaml==6.0.3",
+    "python-multipart==0.0.33",
+    "pypdf==7.0.1",
 ]
 
 [dependency-groups]
@@ -33,6 +35,9 @@ dev = [
     "httpx==0.28.1",
     "ruff>=0.8",
     "fakeredis>=2.31",
+]
+rag-local = [
+    "fastembed==0.9.1",
 ]
 
 [tool.uv]

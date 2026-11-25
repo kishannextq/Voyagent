@@ -37,7 +37,8 @@ class Principal:
         return "admin" in self.roles
 
 
-LOCAL_PRINCIPAL = Principal(sub="local-user", tenant_id="local")
+# Local dev (AUTH_MODE=disabled only): a single user who administers their own "local" tenant.
+LOCAL_PRINCIPAL = Principal(sub="local-user", tenant_id="local", roles=frozenset({"admin", "member"}))
 
 
 @dataclass(frozen=True)

@@ -28,6 +28,8 @@ import mcp_client
 import memory
 import redis_conn
 import run_store
+from rag import store as rag_store
+from rag import tool as rag_tool
 
 log = logging.getLogger("voyagent.orchestrator")
 
@@ -93,7 +95,9 @@ def _graph_input(kind: str, payload: dict) -> Any:
 class Orchestrator(Protocol):
     async def exists(self, thread_id: str) -> bool: ...
     async def snapshot(self, thread_id: str) -> dict | None: ...
-    async def start(self, thread_id: str, kind: str, payload: dict, end_user: str) -> AsyncIterator[str]: ...
+    async def start(
+        self, thread_id: str, kind: str, payload: dict, end_user: str, tenant_id: str = ""
+    ) -> AsyncIterator[str]: ...
     async def delete(self, thread_id: str) -> None: ...
     async def get_memory(self, end_user: str) -> dict[str, str]: ...
     async def delete_memory(self, end_user: str) -> None: ...
@@ -128,6 +132,9 @@ class LocalOrchestrator:
         try:
             mem = await memory.open_store(os.getenv("DATABASE_URL"))
             closers.append(mem.aclose)
+            docs = await rag_store.open_store(os.getenv("DATABASE_URL"))
+            closers.append(docs.aclose)
+            rag_tool.configure(docs)
             travel_graph, close_graph = await graph.open_graph()
         except BaseException:
             for c in closers:
@@ -187,14 +194,16 @@ class LocalOrchestrator:
             "dummy_nodes": meta.get("dummy_nodes"),
         }
 
-    async def start(self, thread_id: str, kind: str, payload: dict, end_user: str) -> AsyncIterator[str]:
+    async def start(
+        self, thread_id: str, kind: str, payload: dict, end_user: str, tenant_id: str = ""
+    ) -> AsyncIterator[str]:
         if self.busy():
             raise Busy()
         graph_input = _graph_input(kind, payload)
         if kind == "start" and memory.enabled() and end_user:
             graph_input["user_memory"] = await self.memory.get(end_user)
         remember = kind == "resume" and memory.enabled() and bool(end_user)
-        return self._stream(thread_id, graph_input, keys.resolve(), end_user, remember)
+        return self._stream(thread_id, graph_input, keys.resolve(), end_user, remember, tenant_id)
 
     async def get_memory(self, end_user: str) -> dict[str, str]:
         return await self.memory.get(end_user)
@@ -203,7 +212,13 @@ class LocalOrchestrator:
         await self.memory.delete(end_user)
 
     async def _stream(
-        self, thread_id: str, graph_input: Any, api_keys: keys.ApiKeys, end_user: str, remember: bool = False
+        self,
+        thread_id: str,
+        graph_input: Any,
+        api_keys: keys.ApiKeys,
+        end_user: str,
+        remember: bool = False,
+        tenant_id: str = "",
     ) -> AsyncIterator[str]:
         """Run the graph on the event loop and emit one SSE event per completed node.
 
@@ -221,6 +236,7 @@ class LocalOrchestrator:
 
             keys.set_current(api_keys)
             keys.set_end_user(end_user)
+            keys.set_tenant(tenant_id)
             run = keys.start_run()
             dummy = meta["dummy_nodes"]
             announced = False
@@ -325,11 +341,13 @@ class RemoteOrchestrator:
         r = await self._client.delete("/internal/v1/memory", params={"owner": end_user}, headers=self._headers())
         r.raise_for_status()
 
-    async def start(self, thread_id: str, kind: str, payload: dict, end_user: str) -> AsyncIterator[str]:
+    async def start(
+        self, thread_id: str, kind: str, payload: dict, end_user: str, tenant_id: str = ""
+    ) -> AsyncIterator[str]:
         req = self._client.build_request(
             "POST",
             f"/internal/v1/threads/{thread_id}/runs",
-            json={"kind": kind, "payload": payload, "end_user": end_user},
+            json={"kind": kind, "payload": payload, "end_user": end_user, "tenant_id": tenant_id},
             headers=self._headers(),
         )
         resp = await self._client.send(req, stream=True)

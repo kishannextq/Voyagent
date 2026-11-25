@@ -43,6 +43,7 @@ Without Docker and other details: [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md).
 | [SECURITY](docs/SECURITY.md) | Findings register and controls |
 | [DEPLOYMENT](docs/DEPLOYMENT.md) | Local dev, environments, AWS target |
 | [OBSERVABILITY](docs/OBSERVABILITY.md) | Telemetry pipeline, KPIs, alerts |
+| [RAG_EVALUATION](docs/RAG_EVALUATION.md) | Retrieval benchmark: strategies, metrics, limits |
 
 ## License
 

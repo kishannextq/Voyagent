@@ -45,6 +45,8 @@ Regression suite covers e.g. "ignore your instructions", "reveal your system pro
 
 **Agents and tools** — per-agent tool allow-lists, per-node timeouts and LLM-call budgets, per-run LLM-call budget (`agents/*.md`, enforced in code) [done]; stdio tool servers start under rlimits (memory, files, file size, processes, no core dumps, umask 077) with only their own key [done]; network/filesystem isolation of tools [planned, Phase 8]. Remembered preferences are allow-listed structured values, sanitised, passed to the model as quoted data, expire after 180 days, and are user-deletable [done].
 
+**Documents (RAG)** — type from content not filename; size/page limits; optional malware-scan hook (required via `RAG_REQUIRE_SCAN` in deployed envs); uploads/deletes for tenant admins only; every query filtered by tenant (tested, incl. pgvector); retrieved text delimited and neutralised (`</documents>` look-alikes), framed as data, cited [n]; retrieval failures never break a plan [done]. OCR/macro-bearing formats not accepted.
+
 **Service-to-service** — api → orchestrator with a shared token (`ORCHESTRATOR_TOKEN`, Secrets Manager; constant-time check; required outside local/test) plus network isolation (security groups) [done in code; SGs in Phase 8].
 
 **Model gateway** — master key and virtual keys from Secrets Manager; API holds only a scoped virtual key; gateway not public; image pinned by digest (see MICROSERVICES.md for the version/advisory analysis) [done].

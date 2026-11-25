@@ -37,6 +37,10 @@ service: `uvicorn orchestrator_app:app --port 8001` with `ORCHESTRATOR_TOKEN`, p
 tool sandbox `SANDBOX_MAX_MEMORY_BYTES`, `SANDBOX_MAX_OPEN_FILES`, `SANDBOX_MAX_FILE_BYTES`, `SANDBOX_MAX_PROCESSES`.
 Scheduled task (daily): `python maintenance.py purge` (`PLAN_RETENTION_DAYS`, default 365).
 
+RAG: `RAG_ENABLED`, `RAG_EMBEDDER` (`gateway` in deployed envs; must match across api, orchestrator, ingest-worker),
+`RAG_EMBED_MODEL`, `RAG_EMBED_DIM` (fixed at migration time), `RAG_RERANKER`, `RAG_MAX_UPLOAD_BYTES`,
+`RAG_MAX_PDF_PAGES`, `MALWARE_SCAN_URL`, `RAG_REQUIRE_SCAN=true`. Worker: `python ingest_worker.py`.
+
 Model gateway: `LLM_GATEWAY_URL`, `LLM_GATEWAY_KEY` (API side; virtual key from
 `services/model-gateway/bootstrap.py`), `LLM_MODEL_FAST`/`LLM_MODEL_SMART` (aliases),
 `LLM_TIMEOUT_SECONDS`. Gateway side: `LITELLM_MASTER_KEY`, `LITELLM_DATABASE_URL`, `GROQ_API_KEY`,

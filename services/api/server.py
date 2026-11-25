@@ -14,7 +14,7 @@ import uuid
 from contextlib import aclosing, asynccontextmanager
 from typing import Annotated, Any
 
-from fastapi import APIRouter, Depends, FastAPI, HTTPException, Query, Request
+from fastapi import APIRouter, Depends, FastAPI, File, Form, HTTPException, Query, Request, UploadFile
 from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, StreamingResponse
@@ -32,6 +32,10 @@ import rate_limit  # noqa: E402
 import redis_conn  # noqa: E402
 import threads  # noqa: E402
 from config import DATABASE_URL  # noqa: E402
+from rag import extract as rag_extract  # noqa: E402
+from rag import ingest as rag_ingest  # noqa: E402
+from rag import retrieval as rag_retrieval  # noqa: E402
+from rag import store as rag_store  # noqa: E402
 
 log = logging.getLogger("voyagent.api")
 
@@ -43,6 +47,8 @@ limiter: rate_limit.Limiter = None  # type: ignore[assignment]
 limits = rate_limit.Limits.from_env()
 thread_store: threads.ThreadStore = None  # type: ignore[assignment]
 authenticator: auth.Authenticator = None  # type: ignore[assignment]
+documents: rag_store.RagStore = None  # type: ignore[assignment]
+ingest_queue: rag_ingest.Queue = None  # type: ignore[assignment]
 
 
 @asynccontextmanager
@@ -52,7 +58,7 @@ async def lifespan(_: FastAPI):
     Plans run in the orchestrator: in-process by default, or the internal orchestrator service
     when ORCHESTRATOR_URL is set (then this process holds no provider keys or graph state).
     """
-    global orch, limiter, limits, thread_store, authenticator
+    global orch, limiter, limits, thread_store, authenticator, documents, ingest_queue
     limits = rate_limit.Limits.from_env()
     authenticator = auth.Authenticator(auth.AuthConfig.from_env())
     log.info("auth_ready", extra={"mode": authenticator.config.mode})
@@ -61,6 +67,8 @@ async def lifespan(_: FastAPI):
     try:
         limiter = rate_limit.build(redis)
         store = thread_store = await threads.open_store(DATABASE_URL)
+        documents = await rag_store.open_store(DATABASE_URL)
+        ingest_queue = rag_ingest.Queue(redis, documents)
         orch = await orchestrator.open_from_env()
     except BaseException:
         if store is not None:
@@ -71,7 +79,9 @@ async def lifespan(_: FastAPI):
     try:
         yield
     finally:
+        await ingest_queue.drain()
         await orch.aclose()
+        await documents.aclose()
         await thread_store.aclose()
         if redis is not None:
             await redis.aclose()
@@ -94,17 +104,19 @@ class BodySizeLimit:
     runs before routing and body parsing.
     """
 
-    def __init__(self, app, max_bytes: int):
+    def __init__(self, app, max_bytes: int, overrides: dict[tuple[str, str], int] | None = None):
         self.app = app
         self.max_bytes = max_bytes
+        self.overrides = overrides or {}  # (method, exact path) -> larger limit, e.g. uploads
 
     async def __call__(self, scope, receive, send):
         if scope["type"] != "http":
             return await self.app(scope, receive, send)
+        limit = self.overrides.get((scope.get("method", ""), scope.get("path", "")), self.max_bytes)
         for name, value in scope.get("headers", ()):
             if name == b"content-length":
                 try:
-                    too_big = int(value) > self.max_bytes
+                    too_big = int(value) > limit
                 except ValueError:
                     too_big = True
                 if too_big:
@@ -128,7 +140,7 @@ class BodySizeLimit:
             message = await receive()
             if message["type"] == "http.request":
                 seen += len(message.get("body", b""))
-                if seen > self.max_bytes and not started:
+                if seen > limit and not started:
                     # Answer now and tell the app the client went away. (Raising here would be
                     # caught by FastAPI's body parsing and turned into a 400.)
                     await self._reject(scope, receive, send)
@@ -144,7 +156,11 @@ class BodySizeLimit:
 
 
 # Registered before CORS so CORS wraps it (413s still carry CORS headers); runs before body parsing.
-api.add_middleware(BodySizeLimit, max_bytes=MAX_BODY_BYTES)
+api.add_middleware(
+    BodySizeLimit,
+    max_bytes=MAX_BODY_BYTES,
+    overrides={(m, f"{p}/documents"): rag_extract.MAX_BYTES + 64 * 1024 for m in ("POST",) for p in ("/api/v1", "/api")},
+)
 
 # CORS (SECURITY.md F8): explicit origins from env (defaults are local dev only), explicit
 # methods/headers, and no credentialed requests: auth uses bearer tokens, not cookies.
@@ -301,7 +317,7 @@ async def _snapshot(thread_id: str) -> PlanResponse:
 async def _start(thread_id: str, kind: str, payload: dict, principal: auth.Principal):
     """Start or resume a run; 503 (before any bytes are sent) when the orchestrator is full."""
     try:
-        return await orch.start(thread_id, kind, payload, _end_user(principal))
+        return await orch.start(thread_id, kind, payload, _end_user(principal), principal.tenant_id)
     except orchestrator.Busy:
         raise HTTPException(status_code=503, detail="Server busy, try again shortly", headers={"Retry-After": "5"}) from None
     except orchestrator.OrchestratorError:
@@ -511,6 +527,96 @@ async def delete_plan(thread_id: str, principal: Caller):
     await orch.delete(thread_id)
     await thread_store.delete(thread_id)
     log.info("plan_deleted", extra={"thread_id": thread_id, "by_admin": rec.owner_sub != principal.sub})
+
+
+# ---------- Organisation documents (RAG) ----------
+
+
+class DocumentView(BaseModel):
+    id: str
+    title: str
+    mime: str
+    version: int
+    status: str
+    scan: str
+    chunk_count: int
+    error: str | None = None
+    created_at: dt.datetime | None = None
+
+
+def _doc_view(d: rag_store.DocumentRecord) -> DocumentView:
+    return DocumentView(**{k: getattr(d, k) for k in DocumentView.model_fields})
+
+
+def _require_admin(principal: auth.Principal) -> None:
+    if not principal.is_admin:
+        raise HTTPException(status_code=403, detail="Admin role required")
+
+
+@router.post("/documents", status_code=202, response_model=DocumentView, dependencies=_RUN)
+async def upload_document(
+    principal: Caller,
+    file: Annotated[UploadFile, File(description="PDF, Markdown or plain text, max 5 MiB")],
+    title: Annotated[str, Form(min_length=1, max_length=200)],
+):
+    """Add a document to your organisation's knowledge (tenant admins). Processed asynchronously:
+    poll GET /documents/{id} until status is `ready` or `failed`."""
+    _require_admin(principal)
+    data = await file.read(rag_extract.MAX_BYTES + 1)
+    try:
+        doc, duplicate = await rag_ingest.accept_upload(documents, principal.tenant_id, title.strip(), data)
+    except rag_extract.Rejected as e:
+        raise HTTPException(status_code=422, detail=str(e)) from None
+    if not duplicate:
+        await ingest_queue.enqueue(doc.id)
+    log.info("document_uploaded", extra={"document_id": doc.id, "duplicate": duplicate, "bytes": len(data)})
+    return _doc_view(doc)
+
+
+@router.get("/documents", response_model=list[DocumentView], dependencies=_READ)
+async def list_documents(principal: Caller):
+    return [_doc_view(d) for d in await documents.list_documents(principal.tenant_id)]
+
+
+class SearchResult(BaseModel):
+    label: int
+    document_id: str
+    title: str
+    text: str
+
+
+@router.get("/documents/search", response_model=list[SearchResult], dependencies=_READ)
+async def search_documents(
+    principal: Caller,
+    q: Annotated[str, Query(min_length=2, max_length=500)],
+    k: Annotated[int, Query(ge=1, le=10)] = 4,
+):
+    """What the agents would retrieve for this query from your organisation's documents."""
+    passages = await rag_retrieval.search(documents, principal.tenant_id, q, k=k)
+    return [SearchResult(label=p.label, document_id=p.document_id, title=p.title, text=p.text) for p in passages]
+
+
+@router.get("/documents/{doc_id}", response_model=DocumentView, dependencies=_READ)
+async def get_document(doc_id: str, principal: Caller):
+    doc = await documents.get_document(principal.tenant_id, _uuid(doc_id))
+    if doc is None:
+        raise HTTPException(status_code=404, detail="Document not found")
+    return _doc_view(doc)
+
+
+@router.delete("/documents/{doc_id}", status_code=204, dependencies=_READ)
+async def delete_document(doc_id: str, principal: Caller):
+    _require_admin(principal)
+    if not await documents.delete_document(principal.tenant_id, _uuid(doc_id)):
+        raise HTTPException(status_code=404, detail="Document not found")
+    log.info("document_deleted", extra={"document_id": doc_id})
+
+
+def _uuid(value: str) -> str:
+    try:
+        return str(uuid.UUID(value))
+    except ValueError:
+        raise HTTPException(status_code=404, detail="Document not found") from None
 
 
 api.include_router(router, prefix="/api/v1", tags=["v1"])

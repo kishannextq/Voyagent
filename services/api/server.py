@@ -236,6 +236,13 @@ async def _request_context(request: Request, call_next):
         logging_setup.request_id_var.reset(token)
 
 
+@api.exception_handler(orchestrator.OrchestratorError)
+async def _orchestrator_unavailable(_: Request, exc: orchestrator.OrchestratorError) -> JSONResponse:
+    """The internal orchestrator is unreachable or failing: 502, never a stack trace."""
+    log.error("orchestrator_unavailable", extra={"error_type": type(exc.__cause__ or exc).__name__})
+    return JSONResponse(status_code=502, content={"detail": "Planner temporarily unavailable"})
+
+
 @api.exception_handler(RequestValidationError)
 async def _validation_error(_: Request, exc: RequestValidationError) -> JSONResponse:
     """422 without echoing submitted values back (they may contain secrets or PII)."""
@@ -419,12 +426,16 @@ router = APIRouter()
 
 @router.get("/health")
 async def health():
-    """`modes`: whether the next plan will use live services or dummy data."""
-    return {
-        "status": "ok",
-        "mock_mode": MOCK_MODE,
-        "modes": await orch.modes(),
-    }
+    """`modes`: whether the next plan will use live services or dummy data.
+
+    Always 200 while this process is up (it's the load balancer's health check): if the
+    orchestrator is unreachable the API still serves reads, so it reports `degraded` instead.
+    """
+    try:
+        modes = await orch.modes()
+    except orchestrator.OrchestratorError:
+        return {"status": "degraded", "mock_mode": MOCK_MODE, "modes": None, "orchestrator": "unavailable"}
+    return {"status": "ok", "mock_mode": MOCK_MODE, "modes": modes}
 
 
 @router.get("/agents", dependencies=[Depends(limit_requests)])

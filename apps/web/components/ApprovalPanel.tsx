@@ -34,7 +34,12 @@ export default function ApprovalPanel({
         {note && <p className="mt-3 max-w-3xl text-sm text-slate-400">{note}</p>}
       </div>
 
-      <div className="scroll-thin relative max-h-[560px] overflow-y-auto px-6 py-6 sm:px-8">
+      <div
+        className="scroll-thin relative max-h-[560px] overflow-y-auto px-6 py-6 sm:px-8"
+        tabIndex={0}
+        role="region"
+        aria-label="Draft itinerary"
+      >
         <Markdown className="prose-base">{draft || "_The itinerary agent returned an empty draft._"}</Markdown>
       </div>
 
@@ -70,7 +75,7 @@ export default function ApprovalPanel({
               onChange={(e) => setFeedback(e.target.value)}
               rows={3}
               placeholder="e.g. Swap day 3 for Nara, add a ryokan stay, keep total under ₹1.8 lakh…"
-              className="w-full resize-none rounded-2xl border border-white/10 bg-white/5 px-4 py-3 text-sm text-white placeholder:text-slate-500 focus:border-fuchsia-400/50 focus:outline-none focus:ring-2 focus:ring-fuchsia-500/20"
+              className="w-full resize-none rounded-2xl border border-white/10 bg-white/5 px-4 py-3 text-sm text-white placeholder:text-slate-400 focus:border-fuchsia-400/50 focus:outline-none focus:ring-2 focus:ring-fuchsia-500/20"
               disabled={busy}
             />
             <div className="flex flex-col-reverse gap-3 sm:flex-row sm:justify-end">

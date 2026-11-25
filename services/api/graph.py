@@ -129,6 +129,7 @@ async def open_checkpointer(database_url: str | None) -> tuple[Any, Callable[[],
             kwargs={"autocommit": True, "prepare_threshold": 0, "row_factory": dict_row, "connect_timeout": 5},
             open=False,
             name="checkpointer",
+            check=AsyncConnectionPool.check_connection,  # drop dead connections (DB restart/failover)
         )
         try:
             await pool.open(wait=True, timeout=timeout)

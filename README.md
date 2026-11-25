@@ -44,6 +44,7 @@ Without Docker and other details: [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md).
 | [DEPLOYMENT](docs/DEPLOYMENT.md) | Local dev, environments, AWS target |
 | [OBSERVABILITY](docs/OBSERVABILITY.md) | Telemetry pipeline, KPIs, alerts |
 | [RAG_EVALUATION](docs/RAG_EVALUATION.md) | Retrieval benchmark: strategies, metrics, limits |
+| [PRODUCTION_READINESS](docs/PRODUCTION_READINESS.md) | Go/no-go review: evidence, load and resilience results, blockers, risks |
 
 ## License
 

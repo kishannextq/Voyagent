@@ -17,6 +17,7 @@ async def open_pool(database_url: str, name: str, required_table: str | None = N
         kwargs={"autocommit": True, "prepare_threshold": 0, "row_factory": dict_row, "connect_timeout": 5},
         open=False,
         name=name,
+        check=AsyncConnectionPool.check_connection,  # drop dead connections (DB restart/failover)
     )
     try:
         await pool.open(wait=True, timeout=timeout)

@@ -143,7 +143,8 @@ export async function checkHealth(): Promise<Health> {
     const res = await fetch(`${API_URL}/api/v1/health`, { cache: "no-store" });
     if (!res.ok) return { ok: false };
     const j = await res.json().catch(() => ({}));
-    return { ok: true, modes: j?.modes };
+    // "degraded" = API up but the planner (orchestrator) unreachable: plans can't run, show offline.
+    return { ok: j?.status === "ok", modes: j?.modes ?? undefined };
   } catch {
     return { ok: false };
   }

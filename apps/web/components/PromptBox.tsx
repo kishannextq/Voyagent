@@ -50,7 +50,7 @@ export default function PromptBox({
             }}
             rows={compact ? 1 : 2}
             placeholder="Where do you want to go? Dates, budget, vibe…"
-            className="min-h-[52px] flex-1 resize-none bg-transparent px-2 py-2.5 text-base text-white placeholder:text-slate-500 focus:outline-none sm:text-lg"
+            className="min-h-[52px] flex-1 resize-none bg-transparent px-2 py-2.5 text-base text-white placeholder:text-slate-400 focus:outline-none sm:text-lg"
             disabled={busy}
           />
           <button type="submit" className="btn-primary shrink-0" disabled={busy || !value.trim()}>

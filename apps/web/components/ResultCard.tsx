@@ -57,7 +57,7 @@ export default function ResultCard({
         ) : content ? (
           <Markdown>{content}</Markdown>
         ) : (
-          <p className="text-sm text-slate-500">No results.</p>
+          <p className="text-sm text-slate-400">No results.</p>
         )}
         {!expanded && content && (
           <div className="pointer-events-none absolute inset-x-0 bottom-0 h-16 bg-gradient-to-t from-ink-900/95 to-transparent" />

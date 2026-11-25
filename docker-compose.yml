@@ -38,6 +38,8 @@ services:
         required: false
     environment:
       DATABASE_URL: postgresql://${POSTGRES_USER:-voyagent}:${POSTGRES_PASSWORD:-voyagent_local_only}@postgres:5432/${POSTGRES_DB:-voyagent}
+      REDIS_URL: redis://redis:6379/0
+      APP_ENV: ${APP_ENV:-local}
       MOCK_MODE: ${MOCK_MODE:-true}
       FRONTEND_ORIGINS: ${FRONTEND_ORIGINS:-http://localhost:3000}
     ports: ["127.0.0.1:8000:8000"]

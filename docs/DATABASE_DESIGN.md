@@ -13,7 +13,8 @@ Services never read another service's schema; they call its API.
 ## Current state
 
 Only LangGraph checkpoint tables exist (created by `PostgresSaver.setup()` when `DATABASE_URL`
-is set). Run metadata (`modes`, `fallback`, `dummy_nodes`) lives in process memory (SECURITY.md F6).
+is set). Run metadata (`modes`, `fallback`, `dummy_nodes`) lives in Redis under `api:run:{thread_id}`
+with a TTL (`RUN_META_TTL_SECONDS`, default 7 days); it moves to `app.plan_runs` once usage accounting lands.
 
 ## Planned schemas
 
@@ -46,7 +47,8 @@ Managed by LiteLLM (keys, teams, budgets, spend logs).
 
 ## Operations
 - Migrations: Alembic per service, run as a one-off ECS task before deploy; never on app start in prod.
-- Pooling: psycopg_pool in-process; RDS Proxy in AWS if connection counts require it.
+- Pooling: psycopg_pool in-process (`PG_POOL_MIN`/`PG_POOL_MAX`/`PG_POOL_TIMEOUT`) [done]; RDS Proxy in AWS if connection counts require it.
+- Checkpointer tables: `CHECKPOINTER_SETUP=true` (default) creates them at startup for local; deployed services set it to `false` and run setup as a one-off migration task.
 - Backups: Aurora PITR (35 days prod); quarterly restore drill.
 - Retention: conversations/memories have per-tenant TTLs; deletion requests hard-delete plan, checkpoints, memories, chunks.
 - Encryption: KMS at rest (Aurora, ElastiCache, S3), TLS in transit.

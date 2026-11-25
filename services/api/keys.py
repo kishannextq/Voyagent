@@ -1,11 +1,11 @@
-"""Per-request API keys.
+"""Provider API keys for a run.
 
-Keys come from the request (user-supplied in the UI) and fall back to the server's
-environment unless MOCK_MODE is on. They live only in a ContextVar for the duration
-of a request: they are never written to graph state, checkpoints or logs.
+Keys come only from the server's environment (Secrets Manager in AWS); clients can
+never supply or see them. For each request they are placed in a ContextVar so agents
+and tools can read them: they are never written to graph state, checkpoints or logs.
 
-All-or-nothing: the plan runs live only when ALL four keys are available (user-supplied
-and server keys combined). If any key is missing, every service returns dummy data.
+All-or-nothing: the plan runs live only when ALL four keys are configured and
+MOCK_MODE is off. Otherwise every service returns dummy data.
 """
 
 import os
@@ -55,24 +55,13 @@ def is_complete(keys: ApiKeys) -> bool:
     return all(getattr(keys, f.name) for f in fields(ApiKeys))
 
 
-def resolve(user: dict | None) -> ApiKeys:
-    """Combine user-supplied keys with the server's keys (user keys win).
+def resolve() -> ApiKeys:
+    """Keys for a run: the server's keys if all four are set, otherwise none.
 
-    All-or-nothing: unless all four keys are available, return no keys at all,
-    so every service uses dummy data instead of mixing live and dummy results.
+    All-or-nothing, so a plan never mixes live and dummy results.
     """
-    user = user or {}
-    base = server_keys()
-    merged = ApiKeys(**{
-        f.name: (str(user.get(f.name) or "").strip() or getattr(base, f.name))
-        for f in fields(ApiKeys)
-    })
-    return merged if is_complete(merged) else ApiKeys()
-
-
-def availability(keys: ApiKeys) -> dict[str, bool]:
-    """Which services have a key (before the all-or-nothing rule). Booleans only, never values."""
-    return {svc: bool(getattr(keys, k)) for svc, k in SERVICE_KEYS.items()}
+    keys = server_keys()
+    return keys if is_complete(keys) else ApiKeys()
 
 
 def modes(keys: ApiKeys) -> dict[str, str]:

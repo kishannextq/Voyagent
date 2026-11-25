@@ -22,7 +22,8 @@ SPECIALISTS = {"flight_agent", "hotel_agent", "weather_agent", "budget_agent", "
 
 @pytest.fixture(scope="module")
 def client():
-    return TestClient(server.api)
+    with TestClient(server.api) as c:
+        yield c
 
 
 def parse_sse(text: str) -> list[tuple[str, dict]]:
@@ -46,14 +47,46 @@ def test_health(client):
     assert body["status"] == "ok"
     assert body["mock_mode"] is True
     assert set(body["modes"].values()) == {"mock"}
+    # Health must not reveal which provider keys the server holds.
+    assert "server_keys" not in body
 
 
 def test_rejects_short_query(client):
     assert client.post("/api/plan/stream", json={"query": "hi"}).status_code == 422
 
 
+def test_rejects_oversized_query(client):
+    assert client.post("/api/plan", json={"query": "x" * 2001}).status_code == 422
+
+
+@pytest.mark.parametrize("path", ["/api/plan", "/api/plan/stream"])
+def test_rejects_client_supplied_keys_on_plan(client, path):
+    r = client.post(path, json={"query": "3 days in Paris", "api_keys": {"groq": "gsk_fake"}})
+    assert r.status_code == 422
+    assert "gsk_fake" not in r.text
+
+
+def test_rejects_client_supplied_keys_on_approval(client):
+    done = parse_sse(client.post("/api/plan/stream", json={"query": "3 days in Paris"}).text)[-1][1]
+    r = client.post(
+        f"/api/plan/{done['thread_id']}/approve/stream",
+        json={"approved": True, "api_keys": {"groq": "gsk_fake"}},
+    )
+    assert r.status_code == 422
+
+
+def test_server_keys_are_ignored_in_mock_mode(client, monkeypatch):
+    for var in ("GROQ_API_KEY", "TAVILY_API_KEY", "AVIATION_STACK_API_KEY", "OPENWEATHER_API_KEY"):
+        monkeypatch.setenv(var, "server-secret-value")
+    assert set(client.get("/api/health").json()["modes"].values()) == {"mock"}
+
+
 def test_full_plan_stream_then_approve(client):
-    r = client.post("/api/plan/stream", json={"query": "5 day trip to Tokyo from Delhi under 1 lakh"})
+    # Exact body shape apps/web/lib/api.ts sends (the API rejects unknown fields).
+    r = client.post(
+        "/api/plan/stream",
+        json={"query": "5 day trip to Tokyo from Delhi under 1 lakh", "user_id": "demo_user"},
+    )
     assert r.status_code == 200
     assert r.headers["content-type"].startswith("text/event-stream")
     events = parse_sse(r.text)

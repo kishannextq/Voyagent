@@ -2,7 +2,7 @@
 
 ## Local development [done]
 
-Prereqs: Docker, Node 20+, [uv](https://docs.astral.sh/uv/).
+Prereqs: Docker, Node 22 LTS, [uv](https://docs.astral.sh/uv/).
 
 ```bash
 cp .env.example .env              # MOCK_MODE=true needs no provider keys
@@ -30,6 +30,16 @@ cd apps/web && npx tsc --noEmit && npm run build
 | test | CI | GitHub Actions, compose services | ephemeral |
 | staging | pre-prod validation | AWS account `staging` (Terraform) | synthetic |
 | production | customers | AWS account `prod` (Terraform) | real, backed up |
+
+API runtime settings: `APP_ENV` (`staging`/`production` require `DATABASE_URL` and `REDIS_URL`),
+`FRONTEND_ORIGINS` (comma-separated, required in deployed envs), optional `FRONTEND_ORIGIN_REGEX`,
+`CHECKPOINTER_SETUP=false` on services (run setup as a migration task), `PG_POOL_MAX`, `LOG_LEVEL`,
+`MAX_CONCURRENT_RUNS` (per process, default 32; 503 beyond), `RUN_TIMEOUT_SECONDS` (default 300),
+`MCP_CONNECT_TIMEOUT` / `MCP_CALL_TIMEOUT` (default 30 s).
+
+The API is async (one event loop per process). psycopg's async driver does not support Windows'
+default ProactorEventLoop, so run the API with `DATABASE_URL` on Linux/containers; on Windows,
+leave `DATABASE_URL` unset (in-memory checkpointer) or use Docker/WSL.
 
 Separate AWS accounts per environment (AWS Organizations). Config via env vars; secrets from
 Secrets Manager; no `.env` files beyond local.

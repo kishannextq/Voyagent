@@ -1,13 +1,10 @@
-# pip install mcp requests
-
+"""Weather MCP server (stdio). Launched by mcp_client.py with a minimal environment that
+contains only OPENWEATHER_API_KEY; it deliberately does not load .env files."""
 
 import os
 
 import requests
-from dotenv import load_dotenv
 from mcp.server.fastmcp import FastMCP
-
-load_dotenv()
 
 mcp = FastMCP("Weather Server")
 

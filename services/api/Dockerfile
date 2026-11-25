@@ -10,7 +10,11 @@ RUN --mount=type=cache,target=/root/.cache/uv uv sync --frozen --no-dev
 COPY *.py ./
 
 FROM python:3.13-slim AS runtime
-RUN groupadd --system app && useradd --system --gid app --home-dir /app app
+# OS security updates; drop pip (not needed at runtime; its vendored libs carry CVEs).
+RUN apt-get update && apt-get upgrade -y --no-install-recommends \
+    && rm -rf /var/lib/apt/lists/* \
+    && python -m pip uninstall -y pip \
+    && groupadd --system app && useradd --system --gid app --home-dir /app app
 WORKDIR /app
 COPY --from=build --chown=app:app /app /app
 ENV PATH="/app/.venv/bin:$PATH" PYTHONUNBUFFERED=1 PYTHONDONTWRITEBYTECODE=1 PORT=8000

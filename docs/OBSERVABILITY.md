@@ -1,6 +1,6 @@
 # Observability
 
-Status: **planned** (Phase 7). Today the API logs via `print()` (SECURITY.md F4).
+Status: structured JSON logging with request IDs is **done** in `services/api/logging_setup.py`; the rest is **planned** (Phase 7).
 
 ## Pipeline
 

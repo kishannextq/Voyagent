@@ -11,21 +11,25 @@ Updated continuously. `[x]` = implemented and verified (how is noted); `[ ]` = n
 - [x] Ruff lint clean; fixed HTTP calls without timeouts in weather MCP server
 - [x] Dockerfiles (non-root, healthchecks) for api and web; Next.js standalone output + security headers
 - [x] docker-compose: postgres(pgvector), redis, api, web, pgAdmin (profile) — config validated; api + standalone web smoke-tested outside Docker
-- [ ] Build images and run `docker compose up` end to end (blocked locally: Docker Desktop/WSL unresponsive on dev machine; CI `images` job builds them)
-- [x] GitHub Actions CI: typecheck/build, lint/test, gitleaks, image build + Trivy
+- [x] Images build in CI and pass Trivy (api: clean of fixable HIGH/CRITICAL; web: only Next.js 14 findings remain, F14). OS upgrades applied, pip/npm removed from runtime images, Node 22 LTS
+- [ ] Run `docker compose up` end to end (blocked locally: Docker Desktop/WSL unresponsive on dev machine)
+- [x] GitHub Actions CI: typecheck/build, lint/test, gitleaks, image build + Trivy — running on the fork `kishannextq/Voyagent` (owner repo is read-only for this account). First run: api green; gitleaks flagged fake test fixtures (fixed); `npm audit` fails on Next.js 14 advisories (F14, open)
 - [x] Design docs (this folder)
 
 ## Phase 2 — API hardening  (`feature/backend-fastapi`, `feature/auth-cognito`)
-- [ ] Remove "bring your own keys" end to end (web dialog/storage, API fields, per-request key plumbing)
-- [ ] Structured JSON logging with redaction; remove `print()` of LLM/user content (F4)
-- [ ] Bounded, persistent run metadata (replace module-level dicts) (F6)
-- [ ] Pooled Postgres checkpointer; fail fast in non-local envs instead of silent in-memory fallback (F10)
-- [ ] Async graph execution; reuse MCP sessions instead of spawning per call (F7)
-- [ ] MCP subprocess gets a minimal env, not the full process env (F11); Tavily key out of URL (F12)
+- [x] Remove "bring your own keys" end to end: web dialog/storage removed, stale keys wiped; API forbids unknown fields; `/api/health` no longer reveals key presence; 422s don't echo input; query/feedback length caps (10 API tests)
+- [x] Structured JSON logging with redaction + request IDs; all `print()` removed (F4) — 9 logging tests
+- [x] Run metadata in Redis with TTL; bounded in-memory fallback local/test only; `APP_ENV` policy (F6)
+- [x] 128-bit server thread IDs without user ID; client IDs validated, 409 on existing thread (F2, partial)
+- [x] Pooled Postgres checkpointer; unreachable DB fails startup; memory only for unset URL in local/test (F10) — Postgres integration test (6 concurrent runs + resume from a second instance) passed in CI
+- [x] Async graph execution on the event loop (async nodes, `astream`, `AsyncPostgresSaver`, async Redis); one persistent MCP session per service instead of a subprocess per call; execution bounds: `MAX_CONCURRENT_RUNS` (503 when full), `RUN_TIMEOUT_SECONDS`, recursion limit (F7) — 7 tests incl. real-subprocess reuse proof; live uvicorn plan→approve smoke test
+- [x] MCP subprocess gets a minimal env (F11); Tavily key in Authorization header (F12, live call unverified)
 - [ ] `/api/v1` versioned routes; old routes kept until web migrates
 - [ ] Cognito JWT validation, RBAC, tenant model; server-generated unguessable thread IDs scoped to tenant/user (F2)
-- [ ] Strict CORS (F8); request size limits; rate limiting (Redis)
+- [x] Strict CORS (F8)
+- [ ] Request body size limit at the edge/ASGI; rate limiting (Redis)
 - [ ] Alembic migrations for application tables
+- [ ] Upgrade `apps/web` off Next.js 14 (critical advisories, F14) on `feature/frontend-nextjs`
 
 ## Phase 3 — Model gateway  (`feature/model-gateway`)
 - [ ] LiteLLM proxy in compose + config (Groq, Bedrock); orchestrator calls go through it

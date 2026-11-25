@@ -6,7 +6,7 @@ Base URL: `NEXT_PUBLIC_API_URL`. No authentication yet (see SECURITY.md F2).
 
 | Method | Path | Body | Response |
 |---|---|---|---|
-| GET | `/api/health` | — | `{status, mock_mode, modes, server_keys}` |
+| GET | `/api/health` | — | `{status, mock_mode, modes}` |
 | GET | `/api/agents` | — | static agent list |
 | POST | `/api/plan` | `PlanRequest` | `PlanResponse` (blocking) |
 | POST | `/api/plan/stream` | `PlanRequest` | `text/event-stream` |
@@ -16,16 +16,17 @@ Base URL: `NEXT_PUBLIC_API_URL`. No authentication yet (see SECURITY.md F2).
 
 ```jsonc
 // PlanRequest
-{ "query": "string (min 3)", "user_id": "string", "thread_id": "string|null", "api_keys": {…}|null }
+{ "query": "string (3–2000)", "user_id": "string", "thread_id": "string|null" }
 // ApprovalRequest
-{ "approved": true, "feedback": "string", "api_keys": {…}|null }
+{ "approved": true, "feedback": "string (≤2000)" }
 // PlanResponse
 { "thread_id": "…", "status": "awaiting_approval|completed|blocked",
   "state": { /* public TravelState fields */ }, "interrupt": {…}|null,
   "modes": {"llm":"live|mock", …}, "fallback": {"service","message"}|null, "dummy_nodes": {…} }
 ```
 
-`api_keys` is scheduled for removal in Phase 2 (ARCHITECTURE.md D10).
+Request bodies reject unknown fields (`422`). Provider keys are server-side only (ARCHITECTURE.md D10);
+422 responses list `type`, `loc`, `msg` and never echo submitted values.
 
 ### SSE events (order)
 

@@ -1,5 +1,6 @@
 import asyncio
 import json
+import logging
 
 from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
 from langgraph.types import interrupt
@@ -11,14 +12,16 @@ from mcp_client import current_weather, forecast, list_airlines, list_airports, 
 from state import TravelState
 from tool_format import fallback_message, is_warning
 
+log = logging.getLogger("voyagent.agents")
 
-def _llm_text(system: str, prompt: str) -> str:
+
+async def _llm_text(system: str, prompt: str) -> str:
     if not keys.is_live("groq"):
         # No usable Groq key for this run (missing, or an earlier live call failed): dummy data.
         keys.use_dummy()
-        return mock.fake_llm_text(system, prompt)
+        return await mock.fake_llm_text(system, prompt)
     try:
-        response = get_llm(keys.current().groq).invoke(
+        response = await get_llm(keys.current().groq).ainvoke(
             [
                 SystemMessage(content=system),
                 HumanMessage(content=prompt),
@@ -32,29 +35,23 @@ def _llm_text(system: str, prompt: str) -> str:
         err = body.get("error") if isinstance(body, dict) else None
         detail = keys.redact(str(err.get("message") if isinstance(err, dict) else (err or exc)))
         msg = fallback_message("groq", status, detail)
-        print(f"[llm] Groq call failed, switching to dummy data: {msg}")
+        log.warning("llm_fallback", extra={"provider": "groq", "status": status, "reason": msg})
         keys.trigger_fallback("llm", msg)
-        return mock.fake_llm_text(system, prompt)
+        return await mock.fake_llm_text(system, prompt)
 
 def _json_from_llm(text: str) -> dict:
-    print("\n========== RAW LLM RESPONSE ==========")
-    print(text)
-    print("======================================\n")
 
     start = text.index("{")
     end = text.rindex("}") + 1
 
     json_text = text[start:end]
 
-    print("\n========== EXTRACTED JSON ==========")
-    print(json_text)
-    print("====================================\n")
 
     return json.loads(json_text)
 
 
 # with guardrail
-def supervisor_agent(state: TravelState):
+async def supervisor_agent(state: TravelState):
     query = state["user_query"]
             
     # INPUT GUARDRAIL
@@ -72,20 +69,15 @@ def supervisor_agent(state: TravelState):
     {query}
     """
 
-    guardrail_raw = _llm_text(
+    guardrail_raw = await _llm_text(
         "You are an input validation guardrail. Return strict JSON only.",
         guardrail_prompt,
     )
 
-    print("\n========== GUARDRAIL RAW RESPONSE ==========")
-    print(guardrail_raw)
-    print("============================================\n")
 
     guardrail_result = _json_from_llm(guardrail_raw)
+    log.info("guardrail_decision", extra={"allowed": bool(guardrail_result.get("allowed", False))})
 
-    print("\n========== GUARDRAIL PARSED RESPONSE ==========")
-    print(json.dumps(guardrail_result, indent=2))
-    print("================================================\n")
 
     if not guardrail_result.get("allowed", False):
         reason = guardrail_result.get(
@@ -138,41 +130,19 @@ User request:
 """
 
  
-    raw = _llm_text(
+    raw = await _llm_text(
         "You route work to specialist agents. Return strict JSON only.",
         prompt,
     )
 
-    print("\n========== RAW LLM RESPONSE ==========")
-    print(raw)
-    print("======================================\n")
 
     parsed = _json_from_llm(raw)
    
-    #parsed = json.loads(raw)
     
-    print("\n========== PARSED JSON ==========")
-    print(json.dumps(parsed, indent=2))
-    print("=================================\n")
     
-    '''
-    At first glance they look the same, but they're not:
-
-    raw → string returned by the LLM
-    parsed → Python dictionary created from that string
-
-    If you really want to demonstrate the difference, add:
-
-    print(type(raw))
-    print(type(parsed))
-    Output:
-
-    <class 'str'>
-    <class 'dict'>
-    Yes, you can get output from a string, but it's much harder and less reliable.
-    '''
     
-    selected = parsed["selected_agents"]    
+    selected = parsed["selected_agents"]
+    log.info("supervisor_routed", extra={"selected_agents": selected})    
 
     return {
         "selected_agents": selected,
@@ -183,93 +153,15 @@ User request:
     }
 
 
-
-
-
-
-# without guardrail
-
-# def supervisor_agent(state: TravelState):
-#     query = state["user_query"]
-#     prompt = f"""
-# You are the supervisor of a real-world multi-agent travel planning system.
-
-# Decide which specialist agents are needed for this user request.
-
-# Available agents:
-# - flight_agent: use when flights, airports, airlines, routes, or airfare guidance are needed
-# - hotel_agent: use when hotels, stays, neighborhoods, or accommodation are needed
-# - weather_agent: use when weather, climate, season, packing, or forecast is useful
-# - budget_agent: use when budget, affordability, cost, or price constraints are mentioned
-# - itinerary_agent: almost always needed to produce the travel plan
-
-# Return only JSON with this schema:
-# {{
-#   "selected_agents": ["flight_agent", "hotel_agent", "weather_agent", "budget_agent", "itinerary_agent"],
-#   "trip_constraints": {{
-#     "destination": "",
-#     "origin": "",
-#     "duration": "",
-#     "budget": "",
-#     "travel_style": "",
-#     "special_preferences": []
-#   }},
-#   "reasoning": ""
-# }}
-
-# User request:
-# {query}
-# """
-    
-#     raw = _llm_text(
-#         "You route work to specialist agents. Return strict JSON only.",
-#         prompt,
-#     )
-
-#     print("\n========== RAW LLM RESPONSE ==========")
-#     print(raw)
-#     print("======================================\n")
-
-#     parsed = _json_from_llm(raw)
-#     print("\n========== PARSED JSON ==========")
-#     print(json.dumps(parsed, indent=2))
-#     print("=================================\n")
-
-#     print(type(raw))
-#     print(type(parsed))
-
-#     selected = parsed["selected_agents"]       
-
-#     return {
-#         "selected_agents": selected,
-#         "trip_constraints": parsed["trip_constraints"],
-#         "supervisor_reasoning": parsed["reasoning"],
-#         "messages": [AIMessage(content="Supervisor created the agent plan.")],
-#         "llm_calls": state.get("llm_calls", 0) + 1,
-#     }
-
-
-
-def flight_agent(state: TravelState):
+async def flight_agent(state: TravelState):
     query = state["user_query"]
     constraints = state["trip_constraints"]
     destination = constraints["destination"]
 
-    print("\n========== FLIGHT AGENT INPUT ==========")
-    print("Query:", query)
-    print("Constraints:", constraints)
-    print("========================================\n")
 
-    airports = asyncio.run(list_airports(destination, limit=10))
-    airlines = asyncio.run(list_airlines("", limit=10))
+    # Independent lookups: run concurrently.
+    airports, airlines = await asyncio.gather(list_airports(destination, limit=10), list_airlines("", limit=10))
 
-    print("\n========== AIRPORT MCP DATA ==========")
-    print(airports)
-    print("======================================\n")
-
-    print("\n========== AIRLINE MCP DATA ==========")
-    print(airlines)
-    print("======================================\n")
 
     prompt = f"""
 Create flight guidance for this trip.
@@ -291,14 +183,11 @@ estimated duration, fare range, peak season warning,
 and booking advice.
 """
 
-    result = _llm_text(
+    result = await _llm_text(
         "You are a flight planning specialist.",
         prompt,
     )
 
-    print("\n========== FLIGHT AGENT OUTPUT ==========")
-    print(result)
-    print("=========================================\n")
 
     # Surface a failed live lookup (e.g. rejected AviationStack key) on the flight card.
     lookup_errors = list(dict.fromkeys(x for x in (airports, airlines) if is_warning(x)))
@@ -312,20 +201,12 @@ and booking advice.
     }
 
 
-
-
-def hotel_agent(state: TravelState):
+async def hotel_agent(state: TravelState):
     query = f"Best hotels and areas to stay for: {state['user_query']}"
 
-    print("\n========== HOTEL AGENT INPUT ==========")
-    print(query)
-    print("=======================================\n")
 
-    result = asyncio.run(tavily_search(query))
+    result = await tavily_search(query)
 
-    print("\n========== HOTEL SEARCH RESULT ==========")
-    print(result)
-    print("=========================================\n")
 
     return {
         "hotel_results": str(result),
@@ -333,24 +214,13 @@ def hotel_agent(state: TravelState):
     }
 
 
-def weather_agent(state: TravelState):
+async def weather_agent(state: TravelState):
     constraints = state["trip_constraints"]
     city = constraints["destination"]
 
-    print("\n========== WEATHER AGENT INPUT ==========")
-    print("City:", city)
-    print("=========================================\n")
 
-    weather_data = asyncio.run(current_weather(city))
-    forecast_data = asyncio.run(forecast(city))
+    weather_data, forecast_data = await asyncio.gather(current_weather(city), forecast(city))
 
-    print("\n========== CURRENT WEATHER ==========")
-    print(weather_data)
-    print("=====================================\n")
-
-    print("\n========== WEATHER FORECAST ==========")
-    print(forecast_data)
-    print("======================================\n")
 
     if is_warning(weather_data) and weather_data == forecast_data:
         # Same provider error for both calls (e.g. rejected key): show it once.
@@ -358,9 +228,6 @@ def weather_agent(state: TravelState):
     else:
         result = f"### Current weather\n{weather_data}\n\n### Forecast\n{forecast_data}"
 
-    print("\n========== WEATHER AGENT OUTPUT ==========")
-    print(result)
-    print("==========================================\n")
 
     return {
         "weather_results": result,
@@ -368,19 +235,8 @@ def weather_agent(state: TravelState):
     }
 
 
+async def budget_agent(state: TravelState):
 
-def budget_agent(state: TravelState):
-
-    print("\n========== BUDGET AGENT INPUT ==========")
-    print("Trip Constraints:")
-    print(state.get("trip_constraints"))
-    print("\nFlight Results:")
-    print(state.get("flight_results"))
-    print("\nHotel Results:")
-    print(state.get("hotel_results"))
-    print("\nWeather Results:")
-    print(state.get("weather_results"))
-    print("=========================================\n")
 
     prompt = f"""
 Analyze whether this trip plan is realistic for the user's budget.
@@ -407,14 +263,11 @@ Return a concise budget assessment with:
 4. whether the plan seems feasible
 """
 
-    result = _llm_text(
+    result = await _llm_text(
         "You are a practical travel budget analyst.",
         prompt,
     )
 
-    print("\n========== BUDGET AGENT OUTPUT ==========")
-    print(result)
-    print("=========================================\n")
 
     return {
         "budget_results": result,
@@ -423,25 +276,8 @@ Return a concise budget assessment with:
     }
 
 
+async def itinerary_agent(state: TravelState):
 
-def itinerary_agent(state: TravelState):
-
-    print("\n========== ITINERARY AGENT INPUT ==========")
-    print("Trip Constraints:")
-    print(state.get("trip_constraints"))
-
-    print("\nFlight Results:")
-    print(state.get("flight_results"))
-
-    print("\nHotel Results:")
-    print(state.get("hotel_results"))
-
-    print("\nWeather Results:")
-    print(state.get("weather_results"))
-
-    print("\nBudget Results:")
-    print(state.get("budget_results"))
-    print("===========================================\n")
 
     prompt = f"""
 Create a clear draft travel itinerary.
@@ -467,14 +303,11 @@ Budget results:
 Make the output structured, practical, and ready for human review.
 """
 
-    result = _llm_text(
+    result = await _llm_text(
         "You are an expert itinerary planner.",
         prompt,
     )
 
-    print("\n========== ITINERARY OUTPUT ==========")
-    print(result)
-    print("======================================\n")
 
     approval_request = f"""
 Please review this draft travel plan.
@@ -492,7 +325,7 @@ Reply with approval or feedback.
     }
 
 
-def human_approval_agent(state: TravelState):
+async def human_approval_agent(state: TravelState):
     feedback = interrupt(
         {
             "question": "Do you approve this itinerary?",
@@ -515,13 +348,8 @@ def human_approval_agent(state: TravelState):
     }
 
 
+async def final_response_agent(state: TravelState):
 
-def final_response_agent(state: TravelState):
-
-    print("\n========== FINAL AGENT INPUT ==========")
-    print("Approved:", state.get("approved"))
-    print("Feedback:", state.get("human_feedback"))
-    print("=======================================\n")
 
     if state["approved"]:
         prompt = f"""
@@ -552,14 +380,11 @@ Budget notes:
 {state['budget_results']}
 """
 
-    result = _llm_text(
+    result = await _llm_text(
         "You produce final user-ready travel plans.",
         prompt,
     )
 
-    print("\n========== FINAL RESPONSE ==========")
-    print(result)
-    print("====================================\n")
 
     return {
         "final_response": result,

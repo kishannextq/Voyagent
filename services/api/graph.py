@@ -1,9 +1,15 @@
-import psycopg
+import logging
+import os
+from collections.abc import Awaitable, Callable
+from typing import Any
+
 from langgraph.checkpoint.memory import MemorySaver
-from langgraph.checkpoint.postgres import PostgresSaver
+from langgraph.checkpoint.postgres.aio import AsyncPostgresSaver
 from langgraph.graph import END, START, StateGraph
 from psycopg.rows import dict_row
+from psycopg_pool import AsyncConnectionPool
 
+import settings
 from agents import (
     budget_agent,
     final_response_agent,
@@ -16,6 +22,8 @@ from agents import (
 )
 from config import DATABASE_URL
 from state import TravelState
+
+log = logging.getLogger("voyagent.graph")
 
 AGENT_ORDER = [
     "flight_agent",
@@ -49,13 +57,12 @@ def route_from_supervisor(state: TravelState) -> str:
     return selected[0] if selected else "itinerary_agent"
 
 
-
 def route_after_agent(current_agent: str):
     def route(state: TravelState) -> str:
         selected = _selected_agents(state)
         current_index = AGENT_ORDER.index(current_agent)
 
-        for next_agent in AGENT_ORDER[current_index + 1:]:
+        for next_agent in AGENT_ORDER[current_index + 1 :]:
             if next_agent in selected:
                 return next_agent
 
@@ -64,9 +71,7 @@ def route_after_agent(current_agent: str):
     return route
 
 
-
-
-def build_graph():
+def build_graph(checkpointer):
     graph = StateGraph(TravelState)
 
     graph.add_node("supervisor", supervisor_agent)
@@ -88,35 +93,61 @@ def build_graph():
     graph.add_edge("human_approval", "final_response")
     graph.add_edge("final_response", END)
 
-    return graph.compile(checkpointer=_build_checkpointer())
+    return graph.compile(checkpointer=checkpointer)
 
 
-def _build_checkpointer():
-    """Postgres checkpointer when DATABASE_URL is reachable, otherwise in-memory.
+# Upper bound on node executions per run; the longest real path is ~9 nodes.
+RECURSION_LIMIT = 25
 
-    interrupt() (human approval) requires a checkpointer either way.
+
+async def _noop() -> None:
+    return None
+
+
+async def open_checkpointer(database_url: str | None) -> tuple[Any, Callable[[], Awaitable[None]]]:
+    """Checkpointer for LangGraph state (interrupt() needs one either way) and its close function.
+
+    - DATABASE_URL set: AsyncPostgresSaver on an async connection pool. If the database is
+      unreachable this raises: a configured database is never silently replaced by memory
+      (SECURITY.md F10).
+    - DATABASE_URL unset: in-memory, allowed only in local/test (APP_ENV).
+
+    Must be called inside the running event loop that will use it (app lifespan).
+    Note: psycopg async does not support Windows' default ProactorEventLoop; run the API
+    with Postgres on Linux/containers (or a SelectorEventLoop) locally.
     """
-    if DATABASE_URL:
+    if database_url:
+        timeout = float(os.getenv("PG_POOL_TIMEOUT", "10"))
+        pool = AsyncConnectionPool(
+            database_url,
+            min_size=int(os.getenv("PG_POOL_MIN", "1")),
+            max_size=int(os.getenv("PG_POOL_MAX", "10")),
+            timeout=timeout,
+            # Required by the Postgres saver: autocommit (setup() runs CREATE INDEX CONCURRENTLY),
+            # no server-side prepared statements (poolers), rows as dicts.
+            kwargs={"autocommit": True, "prepare_threshold": 0, "row_factory": dict_row, "connect_timeout": 5},
+            open=False,
+            name="checkpointer",
+        )
         try:
-            # Settings required by PostgresSaver (setup() runs CREATE INDEX CONCURRENTLY
-            # and the saver reads rows as dicts).
-            conn = psycopg.connect(
-                DATABASE_URL,
-                autocommit=True,
-                prepare_threshold=0,
-                row_factory=dict_row,
-                connect_timeout=5,
-            )
-            checkpointer = PostgresSaver(conn)
-            checkpointer.setup()
-            print("[graph] Using PostgreSQL checkpointer")
-            return checkpointer
-        except Exception as exc:
-            print(f"[graph] PostgreSQL unavailable ({type(exc).__name__}); using in-memory checkpointer")
-
-    return MemorySaver()
+            await pool.open(wait=True, timeout=timeout)
+            saver = AsyncPostgresSaver(pool)
+            # Library-managed tables. In deployed envs run this once as a migration task and set
+            # CHECKPOINTER_SETUP=false on the service (docs/DATABASE_DESIGN.md).
+            if os.getenv("CHECKPOINTER_SETUP", "true").lower() in {"1", "true", "yes"}:
+                await saver.setup()
+        except BaseException:
+            await pool.close()
+            raise
+        log.info("checkpointer_ready", extra={"backend": "postgres", "pool_max": pool.max_size})
+        return saver, pool.close
+    if settings.durable_required():
+        raise RuntimeError(f"DATABASE_URL is required when APP_ENV={settings.app_env()}")
+    log.warning("checkpointer_ready", extra={"backend": "memory", "note": "local/test only"})
+    return MemorySaver(), _noop
 
 
-app = build_graph()
-
-
+async def open_graph(database_url: str | None = DATABASE_URL):
+    """Compiled graph plus the close function for its checkpointer."""
+    saver, close = await open_checkpointer(database_url)
+    return build_graph(saver), close

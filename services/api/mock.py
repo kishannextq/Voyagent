@@ -2,14 +2,14 @@
 
 The real LangGraph graph, routing, guardrail branch, human-in-the-loop interrupt
 and API all run unchanged; only the leaf calls (LLM text generation and MCP tools)
-return canned data. Which services use this is decided per request (see keys.py);
-MOCK_MODE=true makes the server ignore its own keys so only user-supplied keys go live.
+return canned data. Whether a run is live is decided by the server's keys (see keys.py);
+MOCK_MODE=true makes the server ignore its keys so every run uses this data.
 """
 
+import asyncio
 import json
 import os
 import re
-import time
 
 TRUTHY = {"1", "true", "yes", "on"}
 
@@ -25,8 +25,8 @@ def enabled() -> bool:
     return os.getenv("MOCK_MODE", "").strip().lower() in TRUTHY
 
 
-def _delay():
-    time.sleep(float(os.getenv("MOCK_DELAY", "1.2")))
+async def _delay():
+    await asyncio.sleep(float(os.getenv("MOCK_DELAY", "1.2")))
 
 
 def _destination(text: str) -> str:
@@ -46,8 +46,8 @@ def _request(prompt: str) -> str:
     return m.group(1).strip() if m else prompt
 
 
-def fake_llm_text(system: str, prompt: str) -> str:
-    _delay()
+async def fake_llm_text(system: str, prompt: str) -> str:
+    await _delay()
     s = system.lower()
     req = _request(prompt)
     dest = _destination(req)
@@ -114,7 +114,7 @@ def fake_llm_text(system: str, prompt: str) -> str:
         lines = [f"# Draft itinerary — {days} days in {dest}\n"]
         for d in range(days):
             lines.append(f"## Day {d + 1}\n{ideas[min(d, len(ideas) - 1) if d < days - 1 else -1]}.\n")
-        lines.append("> *Dummy data: add a Groq API key to get a real AI-generated plan.*")
+        lines.append("> *Demo data: sample output, not AI-generated.*")
         return "\n".join(lines)
 
     if "final" in s:
@@ -128,34 +128,34 @@ def fake_llm_text(system: str, prompt: str) -> str:
             "## At a glance\n- **Flights:** 1-stop best-value option, book 6–8 weeks ahead\n"
             "- **Stay:** central budget hotel near transit\n- **Budget:** within your limit with ~10% buffer\n\n"
             "## Checklist\n- [ ] Book flights\n- [ ] Reserve hotel\n- [ ] Get travel insurance\n- [ ] Download offline maps\n\n"
-            "> *Dummy data: add a Groq API key to get a real AI-generated plan.*"
+            "> *Demo data: sample output, not AI-generated.*"
         )
 
     return "Dummy response."
 
 
 async def fake_tavily_search(query: str):
-    _delay()
+    await _delay()
     dest = _destination(query)
     return (
         f"### Where to stay in {dest}\n"
         "- **Central district** — best for first-timers, walkable, ₹4,000–6,000/night\n"
         "- **Near the main station** — great transit links, ₹3,500–5,000/night\n"
         "- **Quiet residential area** — local feel, cheaper, ₹2,800–4,000/night\n\n"
-        "*Dummy data: add a Tavily API key for real hotel search.*"
+        "*Demo data: sample hotel areas, not a live search.*"
     )
 
 
 async def fake_tool(*args, **kwargs):
-    _delay()
+    await _delay()
     return {"mock": True, "query": [str(a) for a in args]}
 
 
 async def fake_weather(city: str):
-    _delay()
+    await _delay()
     return f"{city}: 14°C, clear skies, light breeze (dummy data)"
 
 
 async def fake_forecast(city: str):
-    _delay()
+    await _delay()
     return f"{city} next 5 days: 12–17°C, mostly sunny, one day of light rain (dummy data)"

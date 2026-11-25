@@ -4,14 +4,16 @@ Run:
     uvicorn server:api --reload --port 8000
 """
 
-import contextvars
+import asyncio
 import json
 import logging
 import os
 import re
 import time
 import uuid
-from typing import Any, Iterator
+from collections.abc import AsyncIterator
+from contextlib import aclosing, asynccontextmanager
+from typing import Any
 
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.exceptions import RequestValidationError
@@ -25,10 +27,11 @@ import logging_setup
 
 logging_setup.configure("api")
 
+import graph  # noqa: E402
 import keys  # noqa: E402
+import mcp_client  # noqa: E402
 import mock  # noqa: E402
 import run_store  # noqa: E402
-from graph import app as travel_graph  # noqa: E402
 
 log = logging.getLogger("voyagent.api")
 
@@ -52,10 +55,41 @@ PUBLIC_FIELDS = [
     "llm_calls",
 ]
 
+# Execution bounds (no unbounded agent execution): per-process concurrent runs, and a
+# wall-clock deadline per run (graph.RECURSION_LIMIT bounds the number of steps).
+MAX_CONCURRENT_RUNS = int(os.getenv("MAX_CONCURRENT_RUNS", "32"))
+RUN_TIMEOUT_SECONDS = float(os.getenv("RUN_TIMEOUT_SECONDS", "300"))
+
+# Created in the lifespan, inside the server's event loop (async pools are loop-bound).
+travel_graph: Any = None
+runs: run_store.RunStore = None  # type: ignore[assignment]
+_run_slots: asyncio.Semaphore | None = None
+
+
+@asynccontextmanager
+async def lifespan(_: FastAPI):
+    """Open stores at startup (fail fast on misconfiguration) and close them on shutdown."""
+    global travel_graph, runs, _run_slots
+    _run_slots = asyncio.Semaphore(MAX_CONCURRENT_RUNS)
+    runs = await run_store.build()
+    try:
+        travel_graph, close_graph = await graph.open_graph()
+    except BaseException:
+        await runs.aclose()
+        raise
+    try:
+        yield
+    finally:
+        await mcp_client.aclose_sessions()
+        await close_graph()
+        await runs.aclose()
+
+
 api = FastAPI(
     title="Multi-Agent Travel Planner API",
     version="1.0.0",
     description="LangGraph supervisor + specialist agents with human-in-the-loop approval.",
+    lifespan=lifespan,
 )
 
 # CORS (SECURITY.md F8): explicit origins from env (defaults are local dev only), explicit
@@ -161,7 +195,7 @@ class PlanResponse(BaseModel):
 
 
 def _config(thread_id: str) -> dict:
-    return {"configurable": {"thread_id": thread_id}}
+    return {"configurable": {"thread_id": thread_id}, "recursion_limit": graph.RECURSION_LIMIT}
 
 
 def _public(values: dict[str, Any]) -> dict[str, Any]:
@@ -183,23 +217,19 @@ def _initial_input(req: PlanRequest) -> dict[str, Any]:
     }
 
 
-# Per-thread run info (no secrets): service modes, fallback reason, which agents used dummy data.
-runs: run_store.RunStore = run_store.build()
-
-
-def _new_thread_id(req: "PlanRequest") -> str:
+async def _new_thread_id(req: "PlanRequest") -> str:
     """Server-generated IDs are 128-bit random and carry no user identifier (SECURITY.md F2)."""
     if req.thread_id is None:
         return uuid.uuid4().hex
-    if travel_graph.get_state(_config(req.thread_id)).values:
+    if (await travel_graph.aget_state(_config(req.thread_id))).values:
         # Never let a new request write into someone else's existing thread.
         raise HTTPException(status_code=409, detail="Thread already exists")
     return req.thread_id
 
 
-def _snapshot(thread_id: str) -> PlanResponse:
+async def _snapshot(thread_id: str) -> PlanResponse:
     """Build a response from the checkpointed state of a thread."""
-    snap = travel_graph.get_state(_config(thread_id))
+    snap = await travel_graph.aget_state(_config(thread_id))
     values = dict(snap.values or {})
     if not values:
         raise HTTPException(status_code=404, detail=f"Thread '{thread_id}' not found")
@@ -217,7 +247,7 @@ def _snapshot(thread_id: str) -> PlanResponse:
     else:
         status = "completed"
 
-    meta = runs.get(thread_id) or {}
+    meta = await runs.get(thread_id) or {}
     return PlanResponse(
         thread_id=thread_id,
         status=status,
@@ -229,74 +259,89 @@ def _snapshot(thread_id: str) -> PlanResponse:
     )
 
 
-def _run_blocking(graph_input: Any, thread_id: str, api_keys: keys.ApiKeys) -> PlanResponse:
+def _check_capacity() -> None:
+    """Fast 503 when this process is already running its maximum number of plans."""
+    if _run_slots is not None and _run_slots.locked():
+        raise HTTPException(status_code=503, detail="Server busy, try again shortly", headers={"Retry-After": "5"})
+
+
+async def _run_blocking(graph_input: Any, thread_id: str, api_keys: keys.ApiKeys) -> PlanResponse:
     """Same run as the stream (incl. dummy-data fallback), returning only the final state."""
-    for frame in _stream_graph(graph_input, thread_id, api_keys):
-        if frame.startswith("event: error"):
-            message = json.loads(frame.split("data: ", 1)[1])["message"]
-            raise HTTPException(status_code=500, detail=message)
-    return _snapshot(thread_id)
+    # aclosing: release the run slot and the graph stream even if we stop early.
+    async with aclosing(_stream_graph(graph_input, thread_id, api_keys)) as frames:
+        async for frame in frames:
+            if frame.startswith("event: error"):
+                message = json.loads(frame.split("data: ", 1)[1])["message"]
+                raise HTTPException(status_code=500, detail=message)
+    return await _snapshot(thread_id)
 
 
 def _sse(event: str, data: Any) -> str:
     return f"event: {event}\ndata: {json.dumps(data, default=str)}\n\n"
 
 
-def _stream_graph(graph_input: Any, thread_id: str, api_keys: keys.ApiKeys) -> Iterator[str]:
-    """Run the graph and emit one SSE event per completed node.
+async def _stream_graph(graph_input: Any, thread_id: str, api_keys: keys.ApiKeys) -> AsyncIterator[str]:
+    """Run the graph on the event loop and emit one SSE event per completed node.
 
-    Sync generator: Starlette iterates it in a threadpool, so the blocking
-    LangGraph/LLM calls don't stall the event loop. Each next() may run in a
-    different thread/context, so every step runs inside one pinned context that
-    carries this run's provider keys.
+    Provider keys and the per-run state live in ContextVars set here, in the task that
+    serves this request; LangGraph copies the context into the tasks that run each node.
     """
-    modes = keys.modes(api_keys)
-    meta = runs.get(thread_id) or {}
-    meta["modes"] = modes
-    meta.setdefault("dummy_nodes", {})
-    meta.setdefault("fallback", None)
-    runs.save(thread_id, meta)
-    yield _sse("start", {"thread_id": thread_id, "modes": modes})
+    async with _run_slots:
+        modes = keys.modes(api_keys)
+        meta = await runs.get(thread_id) or {}
+        meta["modes"] = modes
+        meta.setdefault("dummy_nodes", {})
+        meta.setdefault("fallback", None)
+        await runs.save(thread_id, meta)
+        yield _sse("start", {"thread_id": thread_id, "modes": modes})
 
-    ctx = contextvars.copy_context()
-    ctx.run(keys.set_current, api_keys)
-    run = ctx.run(keys.start_run)
-    dummy = meta["dummy_nodes"]
-    announced = False
-    if meta["fallback"]:
-        # This plan already fell back to dummy data (e.g. during planning): keep the rest of it
-        # (approval → final plan) on dummy data too, so one plan never mixes live and dummy results.
-        run.fallback = meta["fallback"]
-        announced = True
-    try:
-        chunks = ctx.run(
-            lambda: iter(travel_graph.stream(graph_input, config=_config(thread_id), stream_mode="updates"))
-        )
-        while True:
-            try:
-                chunk = ctx.run(next, chunks)
-            except StopIteration:
-                break
-            for node, update in chunk.items():
-                if node == "__interrupt__":
-                    payload = update[0].value if update else {}
-                    yield _sse("interrupt", {"node": "human_approval", "data": payload})
-                else:
-                    # Did this agent use dummy data? (read & reset per agent; agents run one at a time)
-                    dummy[node] = run.used_dummy
-                    run.used_dummy = False
-                    runs.save(thread_id, meta)
-                    yield _sse("node", {"node": node, "data": _public(update or {}), "dummy": dummy[node]})
-            if run.fallback and not announced:
-                # A live call failed: the run carries on with dummy data. Tell the UI once.
-                announced = True
-                meta["fallback"] = run.fallback
-                runs.save(thread_id, meta)
-                yield _sse("fallback", run.fallback)
-        yield _sse("done", _snapshot(thread_id).model_dump())
-    except Exception as exc:  # surface errors to the UI instead of dropping the stream
-        log.exception("graph_run_failed", extra={"thread_id": thread_id})
-        yield _sse("error", {"message": keys.redact(str(exc), api_keys)})
+        keys.set_current(api_keys)
+        run = keys.start_run()
+        dummy = meta["dummy_nodes"]
+        announced = False
+        if meta["fallback"]:
+            # This plan already fell back to dummy data (e.g. during planning): keep the rest of it
+            # (approval -> final plan) on dummy data too, so one plan never mixes live and dummy results.
+            run.fallback = meta["fallback"]
+            announced = True
+        loop = asyncio.get_running_loop()
+        deadline = loop.time() + RUN_TIMEOUT_SECONDS
+        chunks = travel_graph.astream(graph_input, config=_config(thread_id), stream_mode="updates")
+        try:
+            while True:
+                remaining = deadline - loop.time()
+                if remaining <= 0:
+                    raise TimeoutError
+                try:
+                    # Deadline per step, not around the yields (the client may be slow to read).
+                    chunk = await asyncio.wait_for(anext(chunks), remaining)
+                except StopAsyncIteration:
+                    break
+                for node, update in chunk.items():
+                    if node == "__interrupt__":
+                        payload = update[0].value if update else {}
+                        yield _sse("interrupt", {"node": "human_approval", "data": payload})
+                    else:
+                        # Did this agent use dummy data? (read & reset per agent; agents run one at a time)
+                        dummy[node] = run.used_dummy
+                        run.used_dummy = False
+                        await runs.save(thread_id, meta)
+                        yield _sse("node", {"node": node, "data": _public(update or {}), "dummy": dummy[node]})
+                if run.fallback and not announced:
+                    # A live call failed: the run carries on with dummy data. Tell the UI once.
+                    announced = True
+                    meta["fallback"] = run.fallback
+                    await runs.save(thread_id, meta)
+                    yield _sse("fallback", run.fallback)
+            yield _sse("done", (await _snapshot(thread_id)).model_dump())
+        except TimeoutError:
+            log.warning("graph_run_timeout", extra={"thread_id": thread_id, "timeout_s": RUN_TIMEOUT_SECONDS})
+            yield _sse("error", {"message": f"The plan took longer than {RUN_TIMEOUT_SECONDS:.0f}s and was stopped."})
+        except Exception as exc:  # surface errors to the UI instead of dropping the stream
+            log.exception("graph_run_failed", extra={"thread_id": thread_id})
+            yield _sse("error", {"message": keys.redact(str(exc), api_keys)})
+        finally:
+            await chunks.aclose()
 
 
 _SSE_HEADERS = {"Cache-Control": "no-cache", "X-Accel-Buffering": "no"}
@@ -306,7 +351,7 @@ _SSE_HEADERS = {"Cache-Control": "no-cache", "X-Accel-Buffering": "no"}
 
 
 @api.get("/api/health")
-def health():
+async def health():
     """`modes`: whether the next plan will use live services or dummy data."""
     return {
         "status": "ok",
@@ -316,7 +361,7 @@ def health():
 
 
 @api.get("/api/agents")
-def agents():
+async def agents():
     """Static description of the pipeline, used by the UI to render the agent graph."""
     return [
         {"id": "supervisor", "name": "Supervisor", "description": "Guardrails + routes the request to specialists"},
@@ -331,16 +376,18 @@ def agents():
 
 
 @api.post("/api/plan", response_model=PlanResponse)
-def create_plan(req: PlanRequest):
-    """Run the agents until the human-approval checkpoint (blocking)."""
-    thread_id = _new_thread_id(req)
-    return _run_blocking(_initial_input(req), thread_id, keys.resolve())
+async def create_plan(req: PlanRequest):
+    """Run the agents until the human-approval checkpoint (waits for the result)."""
+    _check_capacity()
+    thread_id = await _new_thread_id(req)
+    return await _run_blocking(_initial_input(req), thread_id, keys.resolve())
 
 
 @api.post("/api/plan/stream")
-def create_plan_stream(req: PlanRequest):
+async def create_plan_stream(req: PlanRequest):
     """Same as POST /api/plan but streams agent progress as Server-Sent Events."""
-    thread_id = _new_thread_id(req)
+    _check_capacity()
+    thread_id = await _new_thread_id(req)
     return StreamingResponse(
         _stream_graph(_initial_input(req), thread_id, keys.resolve()),
         media_type="text/event-stream",
@@ -349,24 +396,26 @@ def create_plan_stream(req: PlanRequest):
 
 
 @api.get("/api/plan/{thread_id}", response_model=PlanResponse)
-def get_plan(thread_id: str):
-    return _snapshot(thread_id)
+async def get_plan(thread_id: str):
+    return await _snapshot(thread_id)
 
 
 @api.post("/api/plan/{thread_id}/approve", response_model=PlanResponse)
-def approve_plan(thread_id: str, body: ApprovalRequest):
-    """Resume a thread paused at human approval (blocking)."""
-    current = _snapshot(thread_id)
+async def approve_plan(thread_id: str, body: ApprovalRequest):
+    """Resume a thread paused at human approval (waits for the result)."""
+    current = await _snapshot(thread_id)
     if current.status != "awaiting_approval":
         raise HTTPException(status_code=409, detail="Thread is not awaiting approval")
-    return _run_blocking(Command(resume=body.resume_value()), thread_id, keys.resolve())
+    _check_capacity()
+    return await _run_blocking(Command(resume=body.resume_value()), thread_id, keys.resolve())
 
 
 @api.post("/api/plan/{thread_id}/approve/stream")
-def approve_plan_stream(thread_id: str, body: ApprovalRequest):
-    current = _snapshot(thread_id)
+async def approve_plan_stream(thread_id: str, body: ApprovalRequest):
+    current = await _snapshot(thread_id)
     if current.status != "awaiting_approval":
         raise HTTPException(status_code=409, detail="Thread is not awaiting approval")
+    _check_capacity()
     return StreamingResponse(
         _stream_graph(Command(resume=body.resume_value()), thread_id, keys.resolve()),
         media_type="text/event-stream",

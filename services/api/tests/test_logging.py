@@ -72,7 +72,11 @@ def test_json_line_has_core_fields():
 
 
 def test_request_id_generated_and_propagated():
-    client = TestClient(server.api)
+    with TestClient(server.api) as client:
+        _check_request_ids(client)
+
+
+def _check_request_ids(client):
     generated = client.get("/api/health").headers["x-request-id"]
     assert len(generated) == 32
     assert (
@@ -85,8 +89,8 @@ def test_request_id_generated_and_propagated():
 
 def test_plan_run_logs_no_user_content(captured):
     marker = "Zanzibar-Marker-7781"
-    client = TestClient(server.api)
-    r = client.post("/api/plan/stream", json={"query": f"4 day trip to Paris, note {marker}"})
+    with TestClient(server.api) as client:
+        r = client.post("/api/plan/stream", json={"query": f"4 day trip to Paris, note {marker}"})
     assert r.status_code == 200
 
     assert captured, "expected log lines"

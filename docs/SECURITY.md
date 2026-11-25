@@ -12,13 +12,14 @@ Found during the Phase 1 audit. Status is updated as fixes land.
 | F4 | High | Raw LLM output, guardrail output and user content printed to stdout | `agents.py` | **Fixed**: all `print()` removed; JSON logs carry metadata only (agent, routing, outcome), redaction filter, request IDs; test asserts no user text/model output in logs |
 | F5 | Medium | Guardrail is a single LLM prompt with user text interpolated (injectable). Fails closed on parse error | `agents.py` `supervisor_agent` | Open → Phase 6 |
 | F6 | Medium | Unbounded module-level dicts per thread (memory growth; breaks with >1 replica) | `server.py` | **Fixed**: `run_store.py`, Redis with TTL (shared across replicas); bounded LRU+TTL in memory for local/test only; required in staging/prod |
-| F7 | Medium | Sync graph on threadpool; MCP subprocess spawned per tool call (DoS amplification) | `server.py`, `mcp_client.py` | Open → Phase 2 |
+| F7 | Medium | Sync graph on threadpool; MCP subprocess spawned per tool call (DoS amplification) | `server.py`, `mcp_client.py` | **Fixed**: graph runs async on the event loop; one persistent MCP session per service (reconnects if it dies or a call times out; `MCP_CONNECT_TIMEOUT`/`MCP_CALL_TIMEOUT`); per-process run cap (503 + `Retry-After`), per-run deadline, recursion limit. Per-user rate limits still open (Phase 2) |
 | F8 | Medium | CORS `allow_credentials=True` with `*` methods/headers | `server.py` | **Fixed**: no credentials, explicit methods/headers, env-only origins (no hardcoded prod domains), `*` ignored |
 | F9 | Low | 110 pinned deps incl. unused Streamlit/pandas/GitPython | `requirements.txt` | **Fixed** (13 direct deps, `uv.lock`) |
 | F10 | Medium | Single psycopg connection shared across threads; silent fallback to in-memory if DB down | `graph.py` | **Fixed**: `psycopg_pool` pool; a configured but unreachable DB fails startup; memory only when `DATABASE_URL` unset in local/test. Postgres integration test runs in CI |
 | F11 | Medium | stdio MCP servers inherit the full process environment (all secrets) | `mcp_client.py` `_server_env` | **Fixed**: allow-listed process basics + that server's own key only; weather server no longer loads `.env`; verified by spawning the real server |
 | F12 | Low | Tavily key passed in URL query string (may be logged by proxies) | `mcp_client.py` | **Fixed** (unverified against live Tavily: no key available): `Authorization: Bearer` header; URL configurable via `TAVILY_MCP_URL` |
 | F13 | Low | Outbound HTTP calls without timeout | `weather_mcp_server.py` | **Fixed** |
+| F14 | Critical | `apps/web` (and the live `frontend` deployment) on Next.js 14 with critical/high advisories (incl. unauthenticated RCE in image optimization on some configurations; PostCSS); `npm audit` lists no fix short of a major upgrade | `apps/web/package.json` | Open → upgrade on `feature/frontend-nextjs`; CI audit gate left failing deliberately |
 
 ## Controls (target)
 

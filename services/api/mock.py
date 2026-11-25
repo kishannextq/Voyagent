@@ -6,10 +6,10 @@ return canned data. Whether a run is live is decided by the server's keys (see k
 MOCK_MODE=true makes the server ignore its keys so every run uses this data.
 """
 
+import asyncio
 import json
 import os
 import re
-import time
 
 TRUTHY = {"1", "true", "yes", "on"}
 
@@ -25,8 +25,8 @@ def enabled() -> bool:
     return os.getenv("MOCK_MODE", "").strip().lower() in TRUTHY
 
 
-def _delay():
-    time.sleep(float(os.getenv("MOCK_DELAY", "1.2")))
+async def _delay():
+    await asyncio.sleep(float(os.getenv("MOCK_DELAY", "1.2")))
 
 
 def _destination(text: str) -> str:
@@ -46,8 +46,8 @@ def _request(prompt: str) -> str:
     return m.group(1).strip() if m else prompt
 
 
-def fake_llm_text(system: str, prompt: str) -> str:
-    _delay()
+async def fake_llm_text(system: str, prompt: str) -> str:
+    await _delay()
     s = system.lower()
     req = _request(prompt)
     dest = _destination(req)
@@ -135,7 +135,7 @@ def fake_llm_text(system: str, prompt: str) -> str:
 
 
 async def fake_tavily_search(query: str):
-    _delay()
+    await _delay()
     dest = _destination(query)
     return (
         f"### Where to stay in {dest}\n"
@@ -147,15 +147,15 @@ async def fake_tavily_search(query: str):
 
 
 async def fake_tool(*args, **kwargs):
-    _delay()
+    await _delay()
     return {"mock": True, "query": [str(a) for a in args]}
 
 
 async def fake_weather(city: str):
-    _delay()
+    await _delay()
     return f"{city}: 14°C, clear skies, light breeze (dummy data)"
 
 
 async def fake_forecast(city: str):
-    _delay()
+    await _delay()
     return f"{city} next 5 days: 12–17°C, mostly sunny, one day of light rain (dummy data)"

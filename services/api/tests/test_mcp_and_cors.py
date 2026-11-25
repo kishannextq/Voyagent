@@ -64,7 +64,8 @@ def test_weather_server_starts_with_minimal_env(secret_env):
 
 @pytest.fixture
 def client():
-    return TestClient(server.api)
+    with TestClient(server.api) as c:
+        yield c
 
 
 def _preflight(client, origin):

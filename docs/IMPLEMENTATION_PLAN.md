@@ -12,7 +12,7 @@ Updated continuously. `[x]` = implemented and verified (how is noted); `[ ]` = n
 - [x] Dockerfiles (non-root, healthchecks) for api and web; Next.js standalone output + security headers
 - [x] docker-compose: postgres(pgvector), redis, api, web, pgAdmin (profile) — config validated; api + standalone web smoke-tested outside Docker
 - [ ] Build images and run `docker compose up` end to end (blocked locally: Docker Desktop/WSL unresponsive on dev machine; CI `images` job builds them)
-- [x] GitHub Actions CI: typecheck/build, lint/test, gitleaks, image build + Trivy
+- [x] GitHub Actions CI: typecheck/build, lint/test, gitleaks, image build + Trivy — running on the fork `kishannextq/Voyagent` (owner repo is read-only for this account). First run: api green; gitleaks flagged fake test fixtures (fixed); `npm audit` fails on Next.js 14 advisories (F14, open)
 - [x] Design docs (this folder)
 
 ## Phase 2 — API hardening  (`feature/backend-fastapi`, `feature/auth-cognito`)
@@ -20,14 +20,15 @@ Updated continuously. `[x]` = implemented and verified (how is noted); `[ ]` = n
 - [x] Structured JSON logging with redaction + request IDs; all `print()` removed (F4) — 9 logging tests
 - [x] Run metadata in Redis with TTL; bounded in-memory fallback local/test only; `APP_ENV` policy (F6)
 - [x] 128-bit server thread IDs without user ID; client IDs validated, 409 on existing thread (F2, partial)
-- [x] Pooled Postgres checkpointer; unreachable DB fails startup; memory only for unset URL in local/test (F10) — integration test runs in CI only (not yet executed: no push access, no local Docker)
-- [ ] Async graph execution; reuse MCP sessions instead of spawning per call (F7)
+- [x] Pooled Postgres checkpointer; unreachable DB fails startup; memory only for unset URL in local/test (F10) — Postgres integration test (6 concurrent runs + resume from a second instance) passed in CI
+- [x] Async graph execution on the event loop (async nodes, `astream`, `AsyncPostgresSaver`, async Redis); one persistent MCP session per service instead of a subprocess per call; execution bounds: `MAX_CONCURRENT_RUNS` (503 when full), `RUN_TIMEOUT_SECONDS`, recursion limit (F7) — 7 tests incl. real-subprocess reuse proof; live uvicorn plan→approve smoke test
 - [x] MCP subprocess gets a minimal env (F11); Tavily key in Authorization header (F12, live call unverified)
 - [ ] `/api/v1` versioned routes; old routes kept until web migrates
 - [ ] Cognito JWT validation, RBAC, tenant model; server-generated unguessable thread IDs scoped to tenant/user (F2)
 - [x] Strict CORS (F8)
 - [ ] Request body size limit at the edge/ASGI; rate limiting (Redis)
 - [ ] Alembic migrations for application tables
+- [ ] Upgrade `apps/web` off Next.js 14 (critical advisories, F14) on `feature/frontend-nextjs`
 
 ## Phase 3 — Model gateway  (`feature/model-gateway`)
 - [ ] LiteLLM proxy in compose + config (Groq, Bedrock); orchestrator calls go through it

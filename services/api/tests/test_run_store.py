@@ -1,3 +1,4 @@
+import asyncio
 import os
 import re
 
@@ -23,42 +24,55 @@ class FakeClock:
 
 
 def test_memory_store_is_bounded_lru():
-    store = run_store.MemoryRunStore(max_entries=3)
-    for i in range(3):
-        store.save(f"t{i}", META)
-    store.get("t0")  # touch: t1 becomes least recently used
-    store.save("t3", META)
-    assert len(store) == 3
-    assert store.get("t1") is None
-    assert store.get("t0") == META
+    async def go():
+        store = run_store.MemoryRunStore(max_entries=3)
+        for i in range(3):
+            await store.save(f"t{i}", META)
+        await store.get("t0")  # touch: t1 becomes least recently used
+        await store.save("t3", META)
+        assert len(store) == 3
+        assert await store.get("t1") is None
+        assert await store.get("t0") == META
+
+    asyncio.run(go())
 
 
 def test_memory_store_expires_entries():
-    clock = FakeClock()
-    store = run_store.MemoryRunStore(ttl=60, clock=clock)
-    store.save("t", META)
-    clock.t += 59
-    assert store.get("t") == META
-    clock.t += 2
-    assert store.get("t") is None
-    assert len(store) == 0
+    async def go():
+        clock = FakeClock()
+        store = run_store.MemoryRunStore(ttl=60, clock=clock)
+        await store.save("t", META)
+        clock.t += 59
+        assert await store.get("t") == META
+        clock.t += 2
+        assert await store.get("t") is None
+        assert len(store) == 0
+
+    asyncio.run(go())
 
 
 def test_memory_store_returns_copies():
-    store = run_store.MemoryRunStore()
-    store.save("t", META)
-    got = store.get("t")
-    got["dummy_nodes"]["x"] = False
-    assert "x" not in store.get("t")["dummy_nodes"]
+    async def go():
+        store = run_store.MemoryRunStore()
+        await store.save("t", META)
+        got = await store.get("t")
+        got["dummy_nodes"]["x"] = False
+        assert "x" not in (await store.get("t"))["dummy_nodes"]
+
+    asyncio.run(go())
 
 
 def test_redis_store_roundtrip_with_ttl():
-    r = fakeredis.FakeRedis()
-    store = run_store.RedisRunStore(r, ttl=120)
-    store.save("abc", META)
-    assert store.get("abc") == META
-    assert 0 < r.ttl("api:run:abc") <= 120
-    assert store.get("missing") is None
+    async def go():
+        r = fakeredis.FakeAsyncRedis()
+        store = run_store.RedisRunStore(r, ttl=120)
+        await store.save("abc", META)
+        assert await store.get("abc") == META
+        assert 0 < await r.ttl("api:run:abc") <= 120
+        assert await store.get("missing") is None
+        await store.aclose()
+
+    asyncio.run(go())
 
 
 @pytest.mark.parametrize("env", ["staging", "production"])
@@ -66,20 +80,20 @@ def test_build_requires_redis_outside_local(monkeypatch, env):
     monkeypatch.setenv("APP_ENV", env)
     monkeypatch.delenv("REDIS_URL", raising=False)
     with pytest.raises(RuntimeError, match="REDIS_URL is required"):
-        run_store.build()
+        asyncio.run(run_store.build())
 
 
 def test_build_rejects_unknown_app_env(monkeypatch):
     monkeypatch.setenv("APP_ENV", "prod")
     monkeypatch.delenv("REDIS_URL", raising=False)
     with pytest.raises(RuntimeError, match="APP_ENV must be one of"):
-        run_store.build()
+        asyncio.run(run_store.build())
 
 
 def test_build_memory_locally(monkeypatch):
     monkeypatch.setenv("APP_ENV", "local")
     monkeypatch.delenv("REDIS_URL", raising=False)
-    assert isinstance(run_store.build(), run_store.MemoryRunStore)
+    assert isinstance(asyncio.run(run_store.build()), run_store.MemoryRunStore)
 
 
 # ---- server integration ----
@@ -87,7 +101,8 @@ def test_build_memory_locally(monkeypatch):
 
 @pytest.fixture
 def client():
-    return TestClient(server.api)
+    with TestClient(server.api) as c:
+        yield c
 
 
 def test_generated_thread_id_is_random_and_has_no_user_id(client):
@@ -98,7 +113,7 @@ def test_generated_thread_id_is_random_and_has_no_user_id(client):
 
 def test_run_metadata_persisted_and_served(client):
     tid = client.post("/api/plan", json={"query": "3 days in Rome"}).json()["thread_id"]
-    meta = server.runs.get(tid)
+    meta = asyncio.run(server.runs.get(tid))  # in-memory store: not bound to a loop
     assert meta["modes"] == {"llm": "mock", "flights": "mock", "hotels": "mock", "weather": "mock"}
     assert meta["dummy_nodes"]["supervisor"] is True
     assert client.get(f"/api/plan/{tid}").json()["dummy_nodes"] == meta["dummy_nodes"]

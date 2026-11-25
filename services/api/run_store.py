@@ -26,8 +26,9 @@ RunMeta = dict[str, Any]  # {"modes": {...}, "fallback": {...}|None, "dummy_node
 
 
 class RunStore(Protocol):
-    def get(self, thread_id: str) -> RunMeta | None: ...
-    def save(self, thread_id: str, meta: RunMeta) -> None: ...
+    async def get(self, thread_id: str) -> RunMeta | None: ...
+    async def save(self, thread_id: str, meta: RunMeta) -> None: ...
+    async def aclose(self) -> None: ...
 
 
 class MemoryRunStore:
@@ -38,7 +39,7 @@ class MemoryRunStore:
         self._clock = clock
         self._lock = threading.Lock()
 
-    def get(self, thread_id: str) -> RunMeta | None:
+    async def get(self, thread_id: str) -> RunMeta | None:
         with self._lock:
             item = self._data.get(thread_id)
             if item is None:
@@ -50,12 +51,15 @@ class MemoryRunStore:
             self._data.move_to_end(thread_id)
             return json.loads(json.dumps(meta))  # copy: callers can't mutate stored state
 
-    def save(self, thread_id: str, meta: RunMeta) -> None:
+    async def save(self, thread_id: str, meta: RunMeta) -> None:
         with self._lock:
             self._data[thread_id] = (self._clock() + self._ttl, json.loads(json.dumps(meta)))
             self._data.move_to_end(thread_id)
             while len(self._data) > self._max:
                 self._data.popitem(last=False)
+
+    async def aclose(self) -> None:
+        return None
 
     def __len__(self) -> int:
         return len(self._data)
@@ -68,21 +72,29 @@ class RedisRunStore:
         self._r = client
         self._ttl = ttl
 
-    def get(self, thread_id: str) -> RunMeta | None:
-        raw = self._r.get(self.PREFIX + thread_id)
+    async def get(self, thread_id: str) -> RunMeta | None:
+        raw = await self._r.get(self.PREFIX + thread_id)
         return json.loads(raw) if raw else None
 
-    def save(self, thread_id: str, meta: RunMeta) -> None:
-        self._r.set(self.PREFIX + thread_id, json.dumps(meta), ex=self._ttl)
+    async def save(self, thread_id: str, meta: RunMeta) -> None:
+        await self._r.set(self.PREFIX + thread_id, json.dumps(meta), ex=self._ttl)
+
+    async def aclose(self) -> None:
+        await self._r.aclose()
 
 
-def build() -> RunStore:
+async def build() -> RunStore:
+    """Create the store inside the running event loop (app lifespan); fails fast on a bad REDIS_URL."""
     url = os.getenv("REDIS_URL", "").strip()
     if url:
-        import redis
+        import redis.asyncio as redis
 
         client = redis.Redis.from_url(url, socket_timeout=2, socket_connect_timeout=2, health_check_interval=30)
-        client.ping()  # fail fast on misconfiguration
+        try:
+            await client.ping()  # fail fast on misconfiguration
+        except BaseException:
+            await client.aclose()
+            raise
         log.info("run_store_ready", extra={"backend": "redis"})
         return RedisRunStore(client)
     if settings.durable_required():

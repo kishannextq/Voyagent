@@ -22,7 +22,8 @@ SPECIALISTS = {"flight_agent", "hotel_agent", "weather_agent", "budget_agent", "
 
 @pytest.fixture(scope="module")
 def client():
-    return TestClient(server.api)
+    with TestClient(server.api) as c:
+        yield c
 
 
 def parse_sse(text: str) -> list[tuple[str, dict]]:

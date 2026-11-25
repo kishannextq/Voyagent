@@ -15,13 +15,13 @@ from tool_format import fallback_message, is_warning
 log = logging.getLogger("voyagent.agents")
 
 
-def _llm_text(system: str, prompt: str) -> str:
+async def _llm_text(system: str, prompt: str) -> str:
     if not keys.is_live("groq"):
         # No usable Groq key for this run (missing, or an earlier live call failed): dummy data.
         keys.use_dummy()
-        return mock.fake_llm_text(system, prompt)
+        return await mock.fake_llm_text(system, prompt)
     try:
-        response = get_llm(keys.current().groq).invoke(
+        response = await get_llm(keys.current().groq).ainvoke(
             [
                 SystemMessage(content=system),
                 HumanMessage(content=prompt),
@@ -37,7 +37,7 @@ def _llm_text(system: str, prompt: str) -> str:
         msg = fallback_message("groq", status, detail)
         log.warning("llm_fallback", extra={"provider": "groq", "status": status, "reason": msg})
         keys.trigger_fallback("llm", msg)
-        return mock.fake_llm_text(system, prompt)
+        return await mock.fake_llm_text(system, prompt)
 
 def _json_from_llm(text: str) -> dict:
 
@@ -51,7 +51,7 @@ def _json_from_llm(text: str) -> dict:
 
 
 # with guardrail
-def supervisor_agent(state: TravelState):
+async def supervisor_agent(state: TravelState):
     query = state["user_query"]
             
     # INPUT GUARDRAIL
@@ -69,7 +69,7 @@ def supervisor_agent(state: TravelState):
     {query}
     """
 
-    guardrail_raw = _llm_text(
+    guardrail_raw = await _llm_text(
         "You are an input validation guardrail. Return strict JSON only.",
         guardrail_prompt,
     )
@@ -130,7 +130,7 @@ User request:
 """
 
  
-    raw = _llm_text(
+    raw = await _llm_text(
         "You route work to specialist agents. Return strict JSON only.",
         prompt,
     )
@@ -153,14 +153,14 @@ User request:
     }
 
 
-def flight_agent(state: TravelState):
+async def flight_agent(state: TravelState):
     query = state["user_query"]
     constraints = state["trip_constraints"]
     destination = constraints["destination"]
 
 
-    airports = asyncio.run(list_airports(destination, limit=10))
-    airlines = asyncio.run(list_airlines("", limit=10))
+    # Independent lookups: run concurrently.
+    airports, airlines = await asyncio.gather(list_airports(destination, limit=10), list_airlines("", limit=10))
 
 
     prompt = f"""
@@ -183,7 +183,7 @@ estimated duration, fare range, peak season warning,
 and booking advice.
 """
 
-    result = _llm_text(
+    result = await _llm_text(
         "You are a flight planning specialist.",
         prompt,
     )
@@ -201,11 +201,11 @@ and booking advice.
     }
 
 
-def hotel_agent(state: TravelState):
+async def hotel_agent(state: TravelState):
     query = f"Best hotels and areas to stay for: {state['user_query']}"
 
 
-    result = asyncio.run(tavily_search(query))
+    result = await tavily_search(query)
 
 
     return {
@@ -214,13 +214,12 @@ def hotel_agent(state: TravelState):
     }
 
 
-def weather_agent(state: TravelState):
+async def weather_agent(state: TravelState):
     constraints = state["trip_constraints"]
     city = constraints["destination"]
 
 
-    weather_data = asyncio.run(current_weather(city))
-    forecast_data = asyncio.run(forecast(city))
+    weather_data, forecast_data = await asyncio.gather(current_weather(city), forecast(city))
 
 
     if is_warning(weather_data) and weather_data == forecast_data:
@@ -236,7 +235,7 @@ def weather_agent(state: TravelState):
     }
 
 
-def budget_agent(state: TravelState):
+async def budget_agent(state: TravelState):
 
 
     prompt = f"""
@@ -264,7 +263,7 @@ Return a concise budget assessment with:
 4. whether the plan seems feasible
 """
 
-    result = _llm_text(
+    result = await _llm_text(
         "You are a practical travel budget analyst.",
         prompt,
     )
@@ -277,7 +276,7 @@ Return a concise budget assessment with:
     }
 
 
-def itinerary_agent(state: TravelState):
+async def itinerary_agent(state: TravelState):
 
 
     prompt = f"""
@@ -304,7 +303,7 @@ Budget results:
 Make the output structured, practical, and ready for human review.
 """
 
-    result = _llm_text(
+    result = await _llm_text(
         "You are an expert itinerary planner.",
         prompt,
     )
@@ -326,7 +325,7 @@ Reply with approval or feedback.
     }
 
 
-def human_approval_agent(state: TravelState):
+async def human_approval_agent(state: TravelState):
     feedback = interrupt(
         {
             "question": "Do you approve this itinerary?",
@@ -349,7 +348,7 @@ def human_approval_agent(state: TravelState):
     }
 
 
-def final_response_agent(state: TravelState):
+async def final_response_agent(state: TravelState):
 
 
     if state["approved"]:
@@ -381,7 +380,7 @@ Budget notes:
 {state['budget_results']}
 """
 
-    result = _llm_text(
+    result = await _llm_text(
         "You produce final user-ready travel plans.",
         prompt,
     )

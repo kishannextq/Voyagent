@@ -1,14 +1,6 @@
 export const API_URL = (process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000").replace(/\/$/, "");
 export const GITHUB_URL = process.env.NEXT_PUBLIC_GITHUB_URL || "https://github.com/websitecreatr99/Voyagent";
 
-/** Optional user-supplied keys. Any service without a key returns dummy data. */
-export interface ApiKeys {
-  groq: string;
-  tavily: string;
-  aviationstack: string;
-  openweather: string;
-}
-
 export type ServiceId = "llm" | "flights" | "hotels" | "weather";
 export type ServiceModes = Record<ServiceId, "live" | "mock">;
 
@@ -112,41 +104,27 @@ async function streamSSE(path: string, body: unknown, onEvent: (e: StreamEvent) 
   if (buffer.trim()) flush(buffer);
 }
 
-/** Only send keys that are filled in. */
-function keysPayload(keys?: Partial<ApiKeys>) {
-  if (!keys) return undefined;
-  const filled = Object.fromEntries(Object.entries(keys).filter(([, v]) => v && v.trim()));
-  return Object.keys(filled).length ? filled : undefined;
-}
-
 export function streamPlan(
-  body: { query: string; user_id: string; thread_id?: string | null; api_keys?: Partial<ApiKeys> },
+  body: { query: string; user_id: string; thread_id?: string | null },
   onEvent: (e: StreamEvent) => void,
   signal?: AbortSignal,
 ) {
-  return streamSSE("/api/plan/stream", { ...body, api_keys: keysPayload(body.api_keys) }, onEvent, signal);
+  return streamSSE("/api/plan/stream", body, onEvent, signal);
 }
 
 export function streamApproval(
   threadId: string,
-  body: { approved: boolean; feedback: string; api_keys?: Partial<ApiKeys> },
+  body: { approved: boolean; feedback: string },
   onEvent: (e: StreamEvent) => void,
   signal?: AbortSignal,
 ) {
-  return streamSSE(
-    `/api/plan/${encodeURIComponent(threadId)}/approve/stream`,
-    { ...body, api_keys: keysPayload(body.api_keys) },
-    onEvent,
-    signal,
-  );
+  return streamSSE(`/api/plan/${encodeURIComponent(threadId)}/approve/stream`, body, onEvent, signal);
 }
 
 export interface Health {
   ok: boolean;
-  /** What a request without user keys gets from this server. */
+  /** Whether the next plan will use live services or demo data. */
   modes?: ServiceModes;
-  /** Which keys the server already holds (booleans only). Users only need to add the rest. */
-  serverKeys?: Record<ServiceId, boolean>;
 }
 
 export async function checkHealth(): Promise<Health> {
@@ -154,7 +132,7 @@ export async function checkHealth(): Promise<Health> {
     const res = await fetch(`${API_URL}/api/health`, { cache: "no-store" });
     if (!res.ok) return { ok: false };
     const j = await res.json().catch(() => ({}));
-    return { ok: true, modes: j?.modes, serverKeys: j?.server_keys };
+    return { ok: true, modes: j?.modes };
   } catch {
     return { ok: false };
   }

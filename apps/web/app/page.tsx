@@ -5,7 +5,6 @@ import {
   Brain,
   Compass,
   Github,
-  KeyRound,
   Plane,
   RotateCcw,
   ShieldAlert,
@@ -15,7 +14,6 @@ import {
 } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import AgentPipeline from "@/components/AgentPipeline";
-import ApiKeysDialog from "@/components/ApiKeysDialog";
 import DataModeBanner from "@/components/DataModeBanner";
 import ApprovalPanel from "@/components/ApprovalPanel";
 import Background from "@/components/Background";
@@ -30,15 +28,12 @@ import {
   checkHealth,
   streamApproval,
   streamPlan,
-  type ApiKeys,
   type InterruptPayload,
-  type ServiceId,
   type ServiceModes,
   type NodeId,
   type StreamEvent,
   type TravelState,
 } from "@/lib/api";
-import { EMPTY_KEYS, KEY_FIELDS, hasAnyKey, loadKeys, saveKeys } from "@/lib/keys";
 
 type Phase = "idle" | "planning" | "review" | "finalizing" | "done" | "blocked" | "error";
 
@@ -47,7 +42,7 @@ const PLANNING_ORDER: NodeId[] = ["supervisor", ...SPECIALISTS, "itinerary_agent
 /** Turn raw backend errors into something a user can act on. */
 function friendlyError(msg: string) {
   if (/401|invalid[_ ]api[_ ]key|unauthori[sz]ed/i.test(msg))
-    return `An API key was rejected (${msg.slice(0, 140)}). Check your keys under "API keys", or clear them to use dummy data.`;
+    return "A provider rejected the server's credentials. Please try again later or contact the operator.";
   if (/429|rate limit/i.test(msg)) return `A provider rate-limited the request (${msg.slice(0, 140)}). Wait a moment and retry.`;
   return msg;
 }
@@ -63,11 +58,8 @@ export default function Home() {
   const [threadId, setThreadId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [online, setOnline] = useState<boolean | null>(null);
-  const [apiKeys, setApiKeys] = useState<ApiKeys>(EMPTY_KEYS);
-  const [rememberKeys, setRememberKeys] = useState(false);
-  const [keysOpen, setKeysOpen] = useState(false);
-  /** Which keys the server already holds (from /api/health); null until the first check */
-  const [serverKeys, setServerKeys] = useState<Record<ServiceId, boolean> | null>(null);
+  /** What the next plan will use (from /api/health); null until the first check */
+  const [previewModes, setPreviewModes] = useState<ServiceModes | null>(null);
   /** What the current plan actually used (from the stream) */
   const [runModes, setRunModes] = useState<ServiceModes | null>(null);
 
@@ -76,9 +68,14 @@ export default function Home() {
   const finalRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
-    const { keys, remember } = loadKeys();
-    setApiKeys(keys);
-    setRememberKeys(remember);
+    // "Bring your own keys" was removed: wipe any keys an earlier version saved in this browser.
+    for (const store of [() => localStorage, () => sessionStorage]) {
+      try {
+        store().removeItem("voyagent.apiKeys");
+      } catch {
+        /* storage unavailable */
+      }
+    }
   }, []);
 
   useEffect(() => {
@@ -87,7 +84,7 @@ export default function Home() {
       checkHealth().then((h) => {
         if (!alive) return;
         setOnline(h.ok);
-        if (h.ok) setServerKeys(h.serverKeys ?? { llm: false, flights: false, hotels: false, weather: false });
+        if (h.ok) setPreviewModes(h.modes ?? null);
       });
     ping();
     const t = setInterval(ping, 15000);
@@ -157,14 +154,14 @@ export default function Home() {
     setThreadId(null);
     setError(null);
     setRunModes(null);
-    run((signal) => streamPlan({ query: q, user_id: userId || "demo_user", api_keys: apiKeys }, handleEvent, signal));
+    run((signal) => streamPlan({ query: q, user_id: userId || "demo_user" }, handleEvent, signal));
   };
 
   const decide = (approved: boolean, feedback: string) => {
     if (!threadId) return;
     setPhase("finalizing");
     setCompleted((c) => [...c, "human_approval"]);
-    run((signal) => streamApproval(threadId, { approved, feedback, api_keys: apiKeys }, handleEvent, signal));
+    run((signal) => streamApproval(threadId, { approved, feedback }, handleEvent, signal));
   };
 
   const reset = () => {
@@ -208,20 +205,6 @@ export default function Home() {
     : [];
   const busy = phase === "planning" || phase === "finalizing";
 
-  /** Services with no key from the user or the server. */
-  const missingKeys = useMemo<ServiceId[]>(
-    () => KEY_FIELDS.filter((f) => !apiKeys[f.id].trim() && !serverKeys?.[f.service]).map((f) => f.service),
-    [serverKeys, apiKeys],
-  );
-  /** What the next plan will use. All-or-nothing: live only when all four keys are available. */
-  const previewModes = useMemo<ServiceModes | null>(() => {
-    if (!serverKeys && !hasAnyKey(apiKeys)) return null;
-    const mode = missingKeys.length === 0 ? "live" : "mock";
-    return { llm: mode, flights: mode, hotels: mode, weather: mode };
-  }, [serverKeys, apiKeys, missingKeys]);
-  const keyCount = KEY_FIELDS.filter((f) => apiKeys[f.id].trim()).length;
-  const openKeys = useCallback(() => setKeysOpen(true), []);
-  const closeKeys = useCallback(() => setKeysOpen(false), []);
   const constraints = Object.entries(data.trip_constraints || {}).filter(
     ([, v]) => v !== null && v !== undefined && v !== "" && !(Array.isArray(v) && !v.length),
   );
@@ -259,21 +242,6 @@ export default function Home() {
               />
               <span className="hidden sm:inline">{online === null ? "Connecting" : online ? "API online" : "API offline"}</span>
             </span>
-            <button
-              onClick={openKeys}
-              className={`chip transition hover:border-fuchsia-400/40 hover:text-white ${
-                keyCount === 4
-                  ? "border-emerald-400/30 bg-emerald-500/10 text-emerald-200"
-                  : keyCount
-                  ? "border-amber-400/30 bg-amber-500/10 text-amber-200"
-                  : ""
-              }`}
-              title={keyCount === 4 ? "All 4 API keys added" : "Add your own API keys (all 4 needed for real results)"}
-            >
-              <KeyRound className="h-3.5 w-3.5" />
-              <span className="hidden sm:inline">API keys</span>
-              {keyCount > 0 && <span className="rounded-full bg-white/10 px-1.5 text-[10px] font-semibold">{keyCount}/4</span>}
-            </button>
             <a
               href={GITHUB_URL}
               target="_blank"
@@ -315,7 +283,7 @@ export default function Home() {
           </div>
 
           <div className="mt-6 w-full">
-            <DataModeBanner modes={previewModes} missing={missingKeys} onAddKeys={openKeys} context="preview" />
+            <DataModeBanner modes={previewModes} context="preview" />
           </div>
 
           <div
@@ -359,7 +327,7 @@ export default function Home() {
             </button>
           </section>
 
-          <DataModeBanner modes={runModes} missing={missingKeys} onAddKeys={openKeys} context="result" />
+          <DataModeBanner modes={runModes} context="result" />
 
           <AgentPipeline statuses={statuses} />
 
@@ -487,18 +455,6 @@ export default function Home() {
         </a>
       </footer>
 
-      <ApiKeysDialog
-        open={keysOpen}
-        initialKeys={apiKeys}
-        initialRemember={rememberKeys}
-        onClose={closeKeys}
-        onSave={(keys, remember) => {
-          setApiKeys(keys);
-          setRememberKeys(remember);
-          saveKeys(keys, remember);
-          setKeysOpen(false);
-        }}
-      />
     </main>
   );
 }

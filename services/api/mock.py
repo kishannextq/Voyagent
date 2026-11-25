@@ -2,8 +2,8 @@
 
 The real LangGraph graph, routing, guardrail branch, human-in-the-loop interrupt
 and API all run unchanged; only the leaf calls (LLM text generation and MCP tools)
-return canned data. Which services use this is decided per request (see keys.py);
-MOCK_MODE=true makes the server ignore its own keys so only user-supplied keys go live.
+return canned data. Whether a run is live is decided by the server's keys (see keys.py);
+MOCK_MODE=true makes the server ignore its keys so every run uses this data.
 """
 
 import json
@@ -114,7 +114,7 @@ def fake_llm_text(system: str, prompt: str) -> str:
         lines = [f"# Draft itinerary — {days} days in {dest}\n"]
         for d in range(days):
             lines.append(f"## Day {d + 1}\n{ideas[min(d, len(ideas) - 1) if d < days - 1 else -1]}.\n")
-        lines.append("> *Dummy data: add a Groq API key to get a real AI-generated plan.*")
+        lines.append("> *Demo data: sample output, not AI-generated.*")
         return "\n".join(lines)
 
     if "final" in s:
@@ -128,7 +128,7 @@ def fake_llm_text(system: str, prompt: str) -> str:
             "## At a glance\n- **Flights:** 1-stop best-value option, book 6–8 weeks ahead\n"
             "- **Stay:** central budget hotel near transit\n- **Budget:** within your limit with ~10% buffer\n\n"
             "## Checklist\n- [ ] Book flights\n- [ ] Reserve hotel\n- [ ] Get travel insurance\n- [ ] Download offline maps\n\n"
-            "> *Dummy data: add a Groq API key to get a real AI-generated plan.*"
+            "> *Demo data: sample output, not AI-generated.*"
         )
 
     return "Dummy response."
@@ -142,7 +142,7 @@ async def fake_tavily_search(query: str):
         "- **Central district** — best for first-timers, walkable, ₹4,000–6,000/night\n"
         "- **Near the main station** — great transit links, ₹3,500–5,000/night\n"
         "- **Quiet residential area** — local feel, cheaper, ₹2,800–4,000/night\n\n"
-        "*Dummy data: add a Tavily API key for real hotel search.*"
+        "*Demo data: sample hotel areas, not a live search.*"
     )
 
 

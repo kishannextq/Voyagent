@@ -16,7 +16,7 @@ Updated continuously. `[x]` = implemented and verified (how is noted); `[ ]` = n
 - [x] Design docs (this folder)
 
 ## Phase 2 — API hardening  (`feature/backend-fastapi`, `feature/auth-cognito`)
-- [ ] Remove "bring your own keys" end to end (web dialog/storage, API fields, per-request key plumbing)
+- [x] Remove "bring your own keys" end to end: web dialog/storage removed, stale keys wiped; API forbids unknown fields; `/api/health` no longer reveals key presence; 422s don't echo input; query/feedback length caps (10 API tests)
 - [ ] Structured JSON logging with redaction; remove `print()` of LLM/user content (F4)
 - [ ] Bounded, persistent run metadata (replace module-level dicts) (F6)
 - [ ] Pooled Postgres checkpointer; fail fast in non-local envs instead of silent in-memory fallback (F10)

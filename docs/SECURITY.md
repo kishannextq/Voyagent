@@ -8,7 +8,7 @@ Found during the Phase 1 audit. Status is updated as fixes land.
 |---|---|---|---|---|
 | F1 | Critical | `VERCEL_OIDC_TOKEN` committed in `.env.local` | `origin/backend` commit `3475a8d` | Excluded from monorepo. **Owner must rotate.** History rewrite needs force-push to `backend` (not authorized). |
 | F2 | High | No authentication; `user_id` client-supplied; thread IDs `{user_id}_{8 hex}` are guessable → any plan readable via `GET /api/plan/{id}` | `server.py` | Open → Phase 2 |
-| F3 | High | User-supplied provider keys sent from browser, optionally kept in `localStorage` | `apps/web/lib/keys.ts`, `ApiKeysDialog.tsx` | Open → Phase 2 (feature removed, D10) |
+| F3 | High | User-supplied provider keys sent from browser, optionally kept in `localStorage` | `apps/web/lib/keys.ts`, `ApiKeysDialog.tsx` | **Fixed** on `feature/backend-fastapi`: dialog and storage removed; stale browser keys wiped on load; API rejects `api_keys` (422, value not echoed) |
 | F4 | High | Raw LLM output, guardrail output and user content printed to stdout | `agents.py` | Open → Phase 2 |
 | F5 | Medium | Guardrail is a single LLM prompt with user text interpolated (injectable). Fails closed on parse error | `agents.py` `supervisor_agent` | Open → Phase 6 |
 | F6 | Medium | Unbounded module-level dicts per thread (memory growth; breaks with >1 replica) | `server.py` | Open → Phase 2 |

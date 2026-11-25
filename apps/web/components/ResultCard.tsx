@@ -35,7 +35,7 @@ export default function ResultCard({
           <p className="text-xs text-slate-400">{agent.blurb}</p>
         </div>
         {dummy && (
-          <span className="chip border-amber-400/30 bg-amber-500/10 text-amber-200" title="No API key for this service: showing sample output">
+          <span className="chip border-amber-400/30 bg-amber-500/10 text-amber-200" title="Demo mode: showing sample output">
             <FlaskConical className="h-3 w-3" /> Dummy data
           </span>
         )}

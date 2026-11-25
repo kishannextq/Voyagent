@@ -10,12 +10,13 @@ import os
 import uuid
 from typing import Any, Iterator
 
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Request
+from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import StreamingResponse
+from fastapi.responses import JSONResponse, StreamingResponse
 from langchain_core.messages import HumanMessage
 from langgraph.types import Command
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 import keys
 import mock
@@ -67,32 +68,32 @@ api.add_middleware(
 )
 
 
+@api.exception_handler(RequestValidationError)
+async def _validation_error(_: Request, exc: RequestValidationError) -> JSONResponse:
+    """422 without echoing submitted values back (they may contain secrets or PII)."""
+    errors = [{k: v for k, v in e.items() if k in ("type", "loc", "msg")} for e in exc.errors()]
+    return JSONResponse(status_code=422, content={"detail": errors})
+
+
 # ---------- Schemas ----------
 
 
-class ApiKeysIn(BaseModel):
-    """Optional user-supplied keys. Used only for this request; never stored."""
-
-    groq: str = Field("", max_length=300)
-    tavily: str = Field("", max_length=300)
-    aviationstack: str = Field("", max_length=300)
-    openweather: str = Field("", max_length=300)
-
-
 class PlanRequest(BaseModel):
-    query: str = Field(..., min_length=3, description="Natural-language travel request")
+    # Unknown fields are rejected, so clients can't send provider keys (removed feature).
+    model_config = ConfigDict(extra="forbid")
+
+    query: str = Field(..., min_length=3, max_length=2000, description="Natural-language travel request")
     user_id: str = Field("demo_user", description="User identifier")
     thread_id: str | None = Field(None, description="Existing thread to continue; a new one is created if omitted")
-    api_keys: ApiKeysIn | None = Field(None, description="Optional API keys; services without a key return dummy data")
 
 
 class ApprovalRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     approved: bool
-    feedback: str = ""
-    api_keys: ApiKeysIn | None = None
+    feedback: str = Field("", max_length=2000)
 
     def resume_value(self) -> dict[str, Any]:
-        # Only the decision goes into the graph: keys must never reach graph state/checkpoints.
         return {"approved": self.approved, "feedback": self.feedback}
 
 
@@ -139,10 +140,6 @@ def _initial_input(req: PlanRequest) -> dict[str, Any]:
 _thread_modes: dict[str, dict[str, str]] = {}
 _thread_fallback: dict[str, dict[str, str]] = {}
 _thread_dummy: dict[str, dict[str, bool]] = {}
-
-
-def _keys_for(api_keys: "ApiKeysIn | None") -> keys.ApiKeys:
-    return keys.resolve(api_keys.model_dump() if api_keys else None)
 
 
 def _snapshot(thread_id: str) -> PlanResponse:
@@ -195,7 +192,7 @@ def _stream_graph(graph_input: Any, thread_id: str, api_keys: keys.ApiKeys) -> I
     Sync generator: Starlette iterates it in a threadpool, so the blocking
     LangGraph/LLM calls don't stall the event loop. Each next() may run in a
     different thread/context, so every step runs inside one pinned context that
-    carries this request's API keys.
+    carries this run's provider keys.
     """
     modes = keys.modes(api_keys)
     _thread_modes[thread_id] = modes
@@ -247,14 +244,11 @@ _SSE_HEADERS = {"Cache-Control": "no-cache", "X-Accel-Buffering": "no"}
 
 @api.get("/api/health")
 def health():
-    """`modes`: what a request WITHOUT user keys gets. `server_keys`: which keys the server
-    holds (booleans), so the UI can tell users which keys they still need to add."""
-    server = keys.server_keys()
+    """`modes`: whether the next plan will use live services or dummy data."""
     return {
         "status": "ok",
         "mock_mode": MOCK_MODE,
-        "modes": keys.modes(server if keys.is_complete(server) else keys.ApiKeys()),
-        "server_keys": keys.availability(server),
+        "modes": keys.modes(keys.resolve()),
     }
 
 
@@ -277,7 +271,7 @@ def agents():
 def create_plan(req: PlanRequest):
     """Run the agents until the human-approval checkpoint (blocking)."""
     thread_id = req.thread_id or f"{req.user_id}_{uuid.uuid4().hex[:8]}"
-    return _run_blocking(_initial_input(req), thread_id, _keys_for(req.api_keys))
+    return _run_blocking(_initial_input(req), thread_id, keys.resolve())
 
 
 @api.post("/api/plan/stream")
@@ -285,7 +279,7 @@ def create_plan_stream(req: PlanRequest):
     """Same as POST /api/plan but streams agent progress as Server-Sent Events."""
     thread_id = req.thread_id or f"{req.user_id}_{uuid.uuid4().hex[:8]}"
     return StreamingResponse(
-        _stream_graph(_initial_input(req), thread_id, _keys_for(req.api_keys)),
+        _stream_graph(_initial_input(req), thread_id, keys.resolve()),
         media_type="text/event-stream",
         headers=_SSE_HEADERS,
     )
@@ -302,7 +296,7 @@ def approve_plan(thread_id: str, body: ApprovalRequest):
     current = _snapshot(thread_id)
     if current.status != "awaiting_approval":
         raise HTTPException(status_code=409, detail="Thread is not awaiting approval")
-    return _run_blocking(Command(resume=body.resume_value()), thread_id, _keys_for(body.api_keys))
+    return _run_blocking(Command(resume=body.resume_value()), thread_id, keys.resolve())
 
 
 @api.post("/api/plan/{thread_id}/approve/stream")
@@ -311,7 +305,7 @@ def approve_plan_stream(thread_id: str, body: ApprovalRequest):
     if current.status != "awaiting_approval":
         raise HTTPException(status_code=409, detail="Thread is not awaiting approval")
     return StreamingResponse(
-        _stream_graph(Command(resume=body.resume_value()), thread_id, _keys_for(body.api_keys)),
+        _stream_graph(Command(resume=body.resume_value()), thread_id, keys.resolve()),
         media_type="text/event-stream",
         headers=_SSE_HEADERS,
     )

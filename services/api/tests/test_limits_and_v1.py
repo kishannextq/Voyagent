@@ -157,26 +157,27 @@ def test_redis_limiter_fails_open():
 # ---------------- trusted proxy headers ----------------
 
 
-async def _post_plan(app, client_ip: str, forwarded_for: str) -> int:
+async def _get_agents(app, client_ip: str, forwarded_for: str) -> int:
     transport = httpx.ASGITransport(app=app, client=(client_ip, 50000))
     async with httpx.AsyncClient(transport=transport, base_url="http://test") as c:
-        r = await c.post("/api/v1/plan", json=PLAN, headers={"X-Forwarded-For": forwarded_for})
+        r = await c.get("/api/v1/agents", headers={"X-Forwarded-For": forwarded_for})
         return r.status_code
 
 
 def test_spoofed_forwarded_for_does_not_evade_limits(monkeypatch):
-    """uvicorn --proxy-headers with the image default (trust 127.0.0.1 only)."""
-    monkeypatch.setenv("RATE_LIMIT_RUNS_PER_MINUTE", "1")
+    """uvicorn --proxy-headers with the image default (trust 127.0.0.1 only), on a public
+    route where limits key on the client IP (authenticated routes key on the user)."""
+    monkeypatch.setenv("RATE_LIMIT_REQUESTS_PER_MINUTE", "1")
     app = ProxyHeadersMiddleware(server.api, trusted_hosts="127.0.0.1")
 
     async def go():
         async with server.lifespan(server.api):
             # Untrusted client rotating X-Forwarded-For is still one client.
-            assert await _post_plan(app, "203.0.113.9", "198.51.100.1") == 200
-            assert await _post_plan(app, "203.0.113.9", "198.51.100.2") == 429
+            assert await _get_agents(app, "203.0.113.9", "198.51.100.1") == 200
+            assert await _get_agents(app, "203.0.113.9", "198.51.100.2") == 429
             # Through the trusted proxy, distinct real clients get their own limits.
-            assert await _post_plan(app, "127.0.0.1", "198.51.100.3") == 200
-            assert await _post_plan(app, "127.0.0.1", "198.51.100.4") == 200
+            assert await _get_agents(app, "127.0.0.1", "198.51.100.3") == 200
+            assert await _get_agents(app, "127.0.0.1", "198.51.100.4") == 200
 
     asyncio.run(go())
 

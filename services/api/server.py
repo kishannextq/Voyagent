@@ -5,6 +5,7 @@ Run:
 """
 
 import asyncio
+import datetime as dt
 import json
 import logging
 import os
@@ -13,9 +14,9 @@ import time
 import uuid
 from collections.abc import AsyncIterator
 from contextlib import aclosing, asynccontextmanager
-from typing import Any
+from typing import Annotated, Any
 
-from fastapi import APIRouter, Depends, FastAPI, HTTPException, Request
+from fastapi import APIRouter, Depends, FastAPI, HTTPException, Query, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, StreamingResponse
@@ -27,6 +28,7 @@ import logging_setup
 
 logging_setup.configure("api")
 
+import auth  # noqa: E402
 import graph  # noqa: E402
 import keys  # noqa: E402
 import mcp_client  # noqa: E402
@@ -34,6 +36,8 @@ import mock  # noqa: E402
 import rate_limit  # noqa: E402
 import redis_conn  # noqa: E402
 import run_store  # noqa: E402
+import threads  # noqa: E402
+from config import DATABASE_URL  # noqa: E402
 
 log = logging.getLogger("voyagent.api")
 
@@ -67,21 +71,29 @@ travel_graph: Any = None
 runs: run_store.RunStore = None  # type: ignore[assignment]
 limiter: rate_limit.Limiter = None  # type: ignore[assignment]
 limits = rate_limit.Limits.from_env()
+thread_store: threads.ThreadStore = None  # type: ignore[assignment]
+authenticator: auth.Authenticator = None  # type: ignore[assignment]
 _run_slots: asyncio.Semaphore | None = None
 
 
 @asynccontextmanager
 async def lifespan(_: FastAPI):
     """Open stores at startup (fail fast on misconfiguration) and close them on shutdown."""
-    global travel_graph, runs, limiter, limits, _run_slots
+    global travel_graph, runs, limiter, limits, thread_store, authenticator, _run_slots
     _run_slots = asyncio.Semaphore(MAX_CONCURRENT_RUNS)
     limits = rate_limit.Limits.from_env()
+    authenticator = auth.Authenticator(auth.AuthConfig.from_env())
+    log.info("auth_ready", extra={"mode": authenticator.config.mode})
     redis = await redis_conn.connect()
+    store = close_graph = None
     try:
         runs = run_store.build(redis)
         limiter = rate_limit.build(redis)
+        store = thread_store = await threads.open_store(DATABASE_URL)
         travel_graph, close_graph = await graph.open_graph()
     except BaseException:
+        if store is not None:
+            await store.aclose()
         if redis is not None:
             await redis.aclose()
         raise
@@ -90,6 +102,7 @@ async def lifespan(_: FastAPI):
     finally:
         await mcp_client.aclose_sessions()
         await close_graph()
+        await thread_store.aclose()
         if redis is not None:
             await redis.aclose()
 
@@ -244,7 +257,8 @@ class PlanRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     query: str = Field(..., min_length=3, max_length=2000, description="Natural-language travel request")
-    user_id: str = Field("demo_user", description="User identifier")
+    # Deprecated and ignored: the user comes from the access token. Accepted so older web builds still validate.
+    user_id: str | None = Field(None, description="Deprecated, ignored", deprecated=True)
     thread_id: str | None = Field(
         None,
         pattern=r"^[A-Za-z0-9_-]{8,64}$",
@@ -286,10 +300,10 @@ def _public(values: dict[str, Any]) -> dict[str, Any]:
     return {k: values[k] for k in PUBLIC_FIELDS if k in values}
 
 
-def _initial_input(req: PlanRequest) -> dict[str, Any]:
+def _initial_input(req: PlanRequest, principal: auth.Principal) -> dict[str, Any]:
     return {
         "messages": [HumanMessage(content=req.query)],
-        "user_id": req.user_id,
+        "user_id": principal.sub,
         "user_query": req.query,
         "flight_results": "",
         "hotel_results": "",
@@ -301,14 +315,28 @@ def _initial_input(req: PlanRequest) -> dict[str, Any]:
     }
 
 
-async def _new_thread_id(req: "PlanRequest") -> str:
-    """Server-generated IDs are 128-bit random and carry no user identifier (SECURITY.md F2)."""
-    if req.thread_id is None:
-        return uuid.uuid4().hex
-    if (await travel_graph.aget_state(_config(req.thread_id))).values:
-        # Never let a new request write into someone else's existing thread.
+async def _new_thread_id(req: "PlanRequest", principal: auth.Principal) -> str:
+    """Create the plan's ownership record. Server IDs are 128-bit random with no user identifier.
+
+    A client-chosen ID must be new: never let a request write into an existing thread (409).
+    """
+    thread_id = req.thread_id or uuid.uuid4().hex
+    if req.thread_id and (await travel_graph.aget_state(_config(thread_id))).values:
         raise HTTPException(status_code=409, detail="Thread already exists")
-    return req.thread_id
+    try:
+        await thread_store.create(thread_id, principal.tenant_id, principal.sub)
+    except threads.ThreadExists:
+        raise HTTPException(status_code=409, detail="Thread already exists") from None
+    return thread_id
+
+
+async def _authorize(thread_id: str, principal: auth.Principal) -> None:
+    """404 (not 403) for plans the caller can't access, so IDs can't be probed."""
+    rec = await thread_store.get(thread_id)
+    if rec is None or not auth.can_access(principal, rec.tenant_id, rec.owner_sub):
+        if rec is not None:
+            log.warning("plan_access_denied", extra={"thread_id": thread_id})
+        raise HTTPException(status_code=404, detail=f"Thread '{thread_id}' not found")
 
 
 async def _snapshot(thread_id: str) -> PlanResponse:
@@ -435,9 +463,14 @@ _SSE_HEADERS = {"Cache-Control": "no-cache", "X-Accel-Buffering": "no"}
 
 
 def _client_id(request: Request) -> str:
-    # The proxy-resolved client IP (uvicorn trusts X-Forwarded-For only from FORWARDED_ALLOW_IPS).
-    # Replaced by the authenticated user/tenant once auth lands.
-    return request.client.host if request.client else "unknown"
+    """Authenticated user when known (auth runs first on protected routes), else client IP.
+
+    The IP is proxy-resolved: uvicorn trusts X-Forwarded-For only from FORWARDED_ALLOW_IPS.
+    """
+    principal = getattr(request.state, "principal", None)
+    if principal is not None:
+        return f"user:{principal.tenant_id}:{principal.sub}"
+    return "ip:" + (request.client.host if request.client else "unknown")
 
 
 async def _enforce(request: Request, scope: str, limit: int) -> None:
@@ -458,6 +491,16 @@ async def limit_requests(request: Request) -> None:
 async def limit_runs(request: Request) -> None:
     """Graph runs cost LLM/tool calls: a tighter limit on top of the general one."""
     await _enforce(request, "run", limits.runs_per_minute)
+
+
+async def current_principal(request: Request) -> auth.Principal:
+    return await authenticator(request)
+
+
+Caller = Annotated[auth.Principal, Depends(current_principal)]
+# Order matters: authenticate first so limits key on the user, not the IP.
+_READ = [Depends(current_principal), Depends(limit_requests)]
+_RUN = [Depends(current_principal), Depends(limit_requests), Depends(limit_runs)]
 
 
 # ---------- Routes ----------
@@ -490,38 +533,67 @@ async def agents():
     ]
 
 
-@router.post("/plan", response_model=PlanResponse, dependencies=[Depends(limit_requests), Depends(limit_runs)])
-async def create_plan(req: PlanRequest):
+class PlanSummary(BaseModel):
+    thread_id: str
+    created_at: dt.datetime
+    owner: bool  # False only for tenant admins listing other users' plans
+
+
+class PlanList(BaseModel):
+    items: list[PlanSummary]
+    next_before: dt.datetime | None = None  # pass as `before` for the next page
+
+
+@router.get("/plans", response_model=PlanList, dependencies=_READ)
+async def list_plans(
+    principal: Caller,
+    limit: Annotated[int, Query(ge=1, le=50)] = 20,
+    before: dt.datetime | None = None,
+    all_users: bool = False,
+):
+    """Your plans, newest first. Tenant admins may pass all_users=true for the whole tenant."""
+    if all_users and not principal.is_admin:
+        raise HTTPException(status_code=403, detail="Admin role required")
+    owner = None if all_users else principal.sub
+    rows = await thread_store.list(principal.tenant_id, owner, limit, before)
+    items = [PlanSummary(thread_id=r.thread_id, created_at=r.created_at, owner=r.owner_sub == principal.sub) for r in rows]
+    return PlanList(items=items, next_before=rows[-1].created_at if len(rows) == limit else None)
+
+
+@router.post("/plan", response_model=PlanResponse, dependencies=_RUN)
+async def create_plan(req: PlanRequest, principal: Caller):
     """Run the agents until the human-approval checkpoint (waits for the result)."""
     _check_capacity()
-    thread_id = await _new_thread_id(req)
-    return await _run_blocking(_initial_input(req), thread_id, keys.resolve())
+    thread_id = await _new_thread_id(req, principal)
+    return await _run_blocking(_initial_input(req, principal), thread_id, keys.resolve())
 
 
-@router.post("/plan/stream", dependencies=[Depends(limit_requests), Depends(limit_runs)])
-async def create_plan_stream(req: PlanRequest):
-    """Same as POST /api/plan but streams agent progress as Server-Sent Events."""
+@router.post("/plan/stream", dependencies=_RUN)
+async def create_plan_stream(req: PlanRequest, principal: Caller):
+    """Same as POST /plan but streams agent progress as Server-Sent Events."""
     _check_capacity()
-    thread_id = await _new_thread_id(req)
+    thread_id = await _new_thread_id(req, principal)
     return StreamingResponse(
-        _stream_graph(_initial_input(req), thread_id, keys.resolve()),
+        _stream_graph(_initial_input(req, principal), thread_id, keys.resolve()),
         media_type="text/event-stream",
         headers=_SSE_HEADERS,
     )
 
 
-@router.get("/plan/{thread_id}", response_model=PlanResponse, dependencies=[Depends(limit_requests)])
-async def get_plan(thread_id: str):
+@router.get("/plan/{thread_id}", response_model=PlanResponse, dependencies=_READ)
+async def get_plan(thread_id: str, principal: Caller):
+    await _authorize(thread_id, principal)
     return await _snapshot(thread_id)
 
 
 @router.post(
     "/plan/{thread_id}/approve",
     response_model=PlanResponse,
-    dependencies=[Depends(limit_requests), Depends(limit_runs)],
+    dependencies=_RUN,
 )
-async def approve_plan(thread_id: str, body: ApprovalRequest):
+async def approve_plan(thread_id: str, body: ApprovalRequest, principal: Caller):
     """Resume a thread paused at human approval (waits for the result)."""
+    await _authorize(thread_id, principal)
     current = await _snapshot(thread_id)
     if current.status != "awaiting_approval":
         raise HTTPException(status_code=409, detail="Thread is not awaiting approval")
@@ -529,8 +601,9 @@ async def approve_plan(thread_id: str, body: ApprovalRequest):
     return await _run_blocking(Command(resume=body.resume_value()), thread_id, keys.resolve())
 
 
-@router.post("/plan/{thread_id}/approve/stream", dependencies=[Depends(limit_requests), Depends(limit_runs)])
-async def approve_plan_stream(thread_id: str, body: ApprovalRequest):
+@router.post("/plan/{thread_id}/approve/stream", dependencies=_RUN)
+async def approve_plan_stream(thread_id: str, body: ApprovalRequest, principal: Caller):
+    await _authorize(thread_id, principal)
     current = await _snapshot(thread_id)
     if current.status != "awaiting_approval":
         raise HTTPException(status_code=409, detail="Thread is not awaiting approval")

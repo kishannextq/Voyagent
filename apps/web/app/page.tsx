@@ -34,6 +34,7 @@ import {
   type StreamEvent,
   type TravelState,
 } from "@/lib/api";
+import { authEnabled, currentUser, signIn, signOut } from "@/lib/auth";
 
 type Phase = "idle" | "planning" | "review" | "finalizing" | "done" | "blocked" | "error";
 
@@ -50,7 +51,7 @@ function friendlyError(msg: string) {
 export default function Home() {
   const [query, setQuery] = useState("");
   const [submittedQuery, setSubmittedQuery] = useState("");
-  const [userId, setUserId] = useState("demo_user");
+  const [user, setUser] = useState<{ email?: string } | null>(null);
   const [phase, setPhase] = useState<Phase>("idle");
   const [completed, setCompleted] = useState<NodeId[]>([]);
   const [data, setData] = useState<TravelState>({});
@@ -76,6 +77,13 @@ export default function Home() {
         /* storage unavailable */
       }
     }
+  }, []);
+
+  useEffect(() => {
+    if (!authEnabled) return;
+    currentUser()
+      .then((u) => setUser(u ? { email: typeof u.profile.email === "string" ? u.profile.email : undefined } : null))
+      .catch(() => setUser(null));
   }, []);
 
   useEffect(() => {
@@ -154,7 +162,11 @@ export default function Home() {
     setThreadId(null);
     setError(null);
     setRunModes(null);
-    run((signal) => streamPlan({ query: q, user_id: userId || "demo_user" }, handleEvent, signal));
+    if (authEnabled && !user) {
+      signIn();
+      return;
+    }
+    run((signal) => streamPlan({ query: q }, handleEvent, signal));
   };
 
   const decide = (approved: boolean, feedback: string) => {
@@ -225,15 +237,17 @@ export default function Home() {
             </span>
           </button>
           <div className="flex items-center gap-2 sm:gap-3">
-            <label className="hidden items-center gap-2 text-xs text-slate-400 lg:flex">
-              User
-              <input
-                value={userId}
-                onChange={(e) => setUserId(e.target.value)}
-                disabled={busy}
-                className="w-28 rounded-lg border border-white/10 bg-white/5 px-2 py-1 text-slate-200 focus:border-fuchsia-400/50 focus:outline-none"
-              />
-            </label>
+            {authEnabled &&
+              (user ? (
+                <button onClick={() => signOut()} className="chip transition hover:border-white/30 hover:text-white" title="Sign out">
+                  <span className="hidden max-w-[10rem] truncate sm:inline">{user.email || "Signed in"}</span>
+                  <span>Sign out</span>
+                </button>
+              ) : (
+                <button onClick={() => signIn()} className="chip transition hover:border-white/30 hover:text-white">
+                  Sign in
+                </button>
+              ))}
             <span className="chip" title={API_URL}>
               <span
                 className={`h-2 w-2 rounded-full ${

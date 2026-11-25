@@ -2,7 +2,14 @@
 
 ## Current contract (implemented, pinned by `services/api/tests/test_api_mock.py`)
 
-Base URL: `NEXT_PUBLIC_API_URL`. No authentication yet (see SECURITY.md F2).
+Base URL: `NEXT_PUBLIC_API_URL`.
+
+**Authentication** (`AUTH_MODE=cognito`): every route except `health` and `agents` needs
+`Authorization: Bearer <Cognito access token>`, otherwise `401` with `WWW-Authenticate: Bearer`
+(no reason given). Identity (`sub`, tenant, roles from Cognito groups) comes only from the token;
+a `user_id` in the body is ignored. Plans are visible to their owner and to `admin`s of the same
+tenant; anything else returns `404`, the same as an unknown ID. `AUTH_MODE=disabled` (local/test
+only) uses a fixed local user.
 
 All routes live under `/api/v1` (the web app uses these). The same handlers are still served at the
 unversioned `/api/...` paths for older web builds; those responses carry `Deprecation: true` and
@@ -14,7 +21,8 @@ unversioned `/api/...` paths for older web builds; those responses carry `Deprec
 | GET | `/api/v1/agents` | — | static agent list | requests |
 | POST | `/api/v1/plan` | `PlanRequest` | `PlanResponse` (waits for the result) | requests + runs |
 | POST | `/api/v1/plan/stream` | `PlanRequest` | `text/event-stream` | requests + runs |
-| GET | `/api/v1/plan/{thread_id}` | — | `PlanResponse` · 404 if unknown | requests |
+| GET | `/api/v1/plans?limit=20&before=<ts>&all_users=false` | — | `{items:[{thread_id, created_at, owner}], next_before}` newest first; `all_users` needs `admin` (403) | requests |
+| GET | `/api/v1/plan/{thread_id}` | — | `PlanResponse` · 404 if unknown or not yours | requests |
 | POST | `/api/v1/plan/{thread_id}/approve` | `ApprovalRequest` | `PlanResponse` · 409 if not awaiting approval | requests + runs |
 | POST | `/api/v1/plan/{thread_id}/approve/stream` | `ApprovalRequest` | `text/event-stream` · 409 | requests + runs |
 
@@ -27,7 +35,7 @@ Common errors:
 | 429 + `Retry-After` | per-client limit hit: `RATE_LIMIT_REQUESTS_PER_MINUTE` (default 120) or `RATE_LIMIT_RUNS_PER_MINUTE` (default 10) |
 | 503 + `Retry-After` | this process is already running `MAX_CONCURRENT_RUNS` plans |
 
-Clients are identified by IP until authentication lands. `Retry-After` and `X-Request-ID` are
+Limits key on the authenticated user (tenant + sub); unauthenticated routes key on the client IP. `Retry-After` and `X-Request-ID` are
 exposed to browsers via CORS.
 
 ```jsonc
@@ -57,10 +65,10 @@ Request bodies reject unknown fields (`422`). Provider keys are server-side only
 
 ## v1 target (planned, Phase 2)
 
-- Prefix `/api/v1` [done]; `Authorization: Bearer <Cognito access token>` (or httpOnly session cookie via web BFF).
-- `user_id` and `tenant_id` come from the token, never the body.
-- `thread_id` server-generated (UUIDv7), stored with owner; access checked on every read/resume.
+- Prefix `/api/v1` [done]; bearer Cognito access token [done]; httpOnly session cookie via a web BFF [planned].
+- `user_id` and `tenant_id` come from the token, never the body [done].
+- `thread_id` server-generated, stored with owner; access checked on every read/resume [done].
 - Errors as `application/problem+json`: `{type, title, status, detail, trace_id}`.
 - SSE frames gain `id:` for resumption and a periodic `: keepalive` comment (≤15 s) for proxies.
-- `GET /api/v1/plans` (paginated, own plans only), `DELETE /api/v1/plans/{id}`.
+- `GET /api/v1/plans` [done]; `DELETE /api/v1/plans/{id}` [planned].
 - Response header `traceparent` echoed for client-side correlation.

@@ -12,8 +12,20 @@ Services never read another service's schema; they call its API.
 
 ## Current state
 
-Only LangGraph checkpoint tables exist (created by `PostgresSaver.setup()` when `DATABASE_URL`
-is set). Run metadata (`modes`, `fallback`, `dummy_nodes`) lives in Redis under `api:run:{thread_id}`
+Migrations: `services/api/migrate.py` applies the Alembic migrations in `services/api/migrations/`
+(version table `app.alembic_version`) and then the LangGraph checkpointer tables. It runs once per
+deploy as a one-off task (compose: the `migrate` service); services start with
+`CHECKPOINTER_SETUP=false` and fail fast if `app.threads` is missing.
+
+```sql
+-- 0001: plan ownership (no user content)
+app.threads(thread_id text pk check (thread_id ~ '^[A-Za-z0-9_-]{8,64}$'),
+            tenant_id text not null, owner_sub text not null, created_at timestamptz default now())
+  index (tenant_id, owner_sub, created_at desc), index (tenant_id, created_at desc)
+```
+`owner_sub` is the Cognito `sub`; `tenant_id` comes from the token's tenant claim (or `user:<sub>`).
+
+LangGraph checkpoint tables are library-managed. Run metadata (`modes`, `fallback`, `dummy_nodes`) lives in Redis under `api:run:{thread_id}`
 with a TTL (`RUN_META_TTL_SECONDS`, default 7 days); it moves to `app.plan_runs` once usage accounting lands.
 
 ## Planned schemas

@@ -20,6 +20,9 @@ dependencies = [
     "langgraph-sdk>=0.4.4",
     "aviationstack-mcp>=1.8.1",
     "redis==6.4.0",
+    "pyjwt[crypto]==2.15.1",
+    "alembic==1.20.1",
+    "sqlalchemy==2.1.8",
 ]
 
 [dependency-groups]

@@ -19,7 +19,9 @@ from langchain_mcp_adapters.tools import load_mcp_tools
 import agent_config
 import guardrails
 import keys
+import metrics
 import mock
+import telemetry
 import tool_format
 
 log = logging.getLogger("voyagent.mcp")
@@ -236,15 +238,24 @@ async def _tool(key_field: str, tool_name: str, args: dict, dummy):
     dummy data, so the plan still completes through all agents.
     The calling agent must have the tool in its allow-list (agents/<name>.md), live or not.
     """
-    agent_config.check_tool(key_field, tool_name)
+    try:
+        agent_config.check_tool(key_field, tool_name)
+    except agent_config.ToolNotAllowed:
+        metrics.tool_calls.labels(key_field, "denied").inc()
+        raise
     if keys.is_live(key_field):
         try:
-            return await call_tool(key_field, tool_name, args)
+            with telemetry.tracer.start_as_current_span("tool.call", attributes={"tool.service": key_field, "tool.name": tool_name}):
+                result = await call_tool(key_field, tool_name, args)
+            metrics.tool_calls.labels(key_field, "live").inc()
+            return result
         except ToolFailed as e:
+            metrics.tool_calls.labels(key_field, "fallback").inc()
             msg = tool_format.fallback_message(key_field, e.status, e.detail)
             log.warning("tool_fallback", extra={"service": key_field, "tool": tool_name, "status": e.status, "reason": msg})
             keys.trigger_fallback(_SERVICE[key_field], msg)
     keys.use_dummy()
+    metrics.tool_calls.labels(key_field, "mock").inc()
     return await dummy()
 
 

@@ -25,6 +25,9 @@ from typing import Literal
 import yaml
 from pydantic import BaseModel, ConfigDict, Field
 
+import metrics
+import telemetry
+
 log = logging.getLogger("voyagent.agent_config")
 
 AGENTS_DIR = pathlib.Path(os.getenv("AGENTS_DIR", pathlib.Path(__file__).parent / "agents"))
@@ -137,10 +140,17 @@ def wrap(name: str, node):
     async def run(state):
         _current_agent.set(name)  # node tasks run in their own context copy
         _node_calls.set([0])
+        start = asyncio.get_running_loop().time()
         try:
-            return await asyncio.wait_for(node(state), spec.timeout_seconds)
+            with telemetry.tracer.start_as_current_span(f"agent {name}", attributes={"agent.name": name}):
+                return await asyncio.wait_for(node(state), spec.timeout_seconds)
+        except BudgetExceeded:
+            metrics.budget_exceeded.labels("node_or_run").inc()
+            raise
         except TimeoutError:
             log.warning("agent_timeout", extra={"agent": name, "timeout_s": spec.timeout_seconds})
             raise TimeoutError(f"{name} took longer than {spec.timeout_seconds:.0f}s") from None
+        finally:
+            metrics.agent_duration.labels(name).observe(asyncio.get_running_loop().time() - start)
 
     return run

@@ -12,7 +12,7 @@ Updated continuously. `[x]` = implemented and verified (how is noted); `[ ]` = n
 - [x] Dockerfiles (non-root, healthchecks) for api and web; Next.js standalone output + security headers
 - [x] docker-compose: postgres(pgvector), redis, api, web, pgAdmin (profile) — config validated; api + standalone web smoke-tested outside Docker
 - [x] Images build in CI and pass Trivy (api: clean of fixable HIGH/CRITICAL; web: Next.js 14 findings fixed by the upgrade, F14). OS upgrades applied, pip/npm removed from runtime images, Node 22 LTS
-- [ ] Run `docker compose up` end to end (blocked locally: Docker Desktop/WSL unresponsive on dev machine)
+- [x] `docker compose up` end to end: verified in CI (observability job runs postgres, redis, migrate, orchestrator, api, ingest-worker and the telemetry stack with real traffic); the web container is smoke-tested separately. Still not run on the dev machine (Docker Desktop/WSL unresponsive)
 - [x] GitHub Actions CI: typecheck/build, lint/test, gitleaks, image build + Trivy — running on the fork `kishannextq/Voyagent` (owner repo is read-only for this account). First run: api green; gitleaks flagged fake test fixtures (fixed); `npm audit` failed on Next.js 14 advisories (F14, fixed on `feature/frontend-nextjs`)
 - [x] Design docs (this folder)
 
@@ -65,8 +65,9 @@ Updated continuously. `[x]` = implemented and verified (how is noted); `[ ]` = n
 - [ ] Bedrock Guardrails enabled (needs AWS)
 
 ## Phase 7 — Observability  (`feature/observability`)
-- [ ] OTel traces/metrics/logs across web → api → orchestrator → gateway
-- [ ] Alloy, Prometheus, Loki, Tempo, Grafana dashboards + alerts; Langfuse
+- [x] OTel traces api → orchestrator (spans for runs, agents, model/tool calls, document search; traceparent injected); Prometheus metrics on an internal port; trace ids in logs — 4 tests
+- [x] Collector, Prometheus, Loki, Tempo, Grafana in compose (`--profile observability`), provisioned datasources + dashboard, 9 alert rules (promtool-checked) — CI `observability` job verifies a cross-service trace in Tempo, metrics in Prometheus, logs in Loki and Grafana provisioning
+- [ ] Browser and gateway spans; Langfuse (needs a data-retention decision); token/cost metrics; alert routing
 
 ## Phase 8 — Infrastructure & delivery  (`feature/terraform-infrastructure`, `feature/cicd-deployment`)
 - [ ] Terraform modules; `validate`/`plan` for staging (no apply without authorization)

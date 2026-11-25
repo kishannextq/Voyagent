@@ -27,10 +27,12 @@ logging_setup.configure("api")
 import auth  # noqa: E402
 import guardrails  # noqa: E402
 import memory  # noqa: E402
+import metrics  # noqa: E402
 import mock  # noqa: E402
 import orchestrator  # noqa: E402
 import rate_limit  # noqa: E402
 import redis_conn  # noqa: E402
+import telemetry  # noqa: E402
 import threads  # noqa: E402
 from config import DATABASE_URL  # noqa: E402
 from rag import extract as rag_extract  # noqa: E402
@@ -60,6 +62,7 @@ async def lifespan(_: FastAPI):
     when ORCHESTRATOR_URL is set (then this process holds no provider keys or graph state).
     """
     global orch, limiter, limits, thread_store, authenticator, documents, ingest_queue
+    metrics.start_server()
     limits = rate_limit.Limits.from_env()
     authenticator = auth.Authenticator(auth.AuthConfig.from_env())
     log.info("auth_ready", extra={"mode": authenticator.config.mode})
@@ -217,6 +220,10 @@ async def _request_context(request: Request, call_next):
         return response
     finally:
         route = request.scope.get("route")
+        elapsed = time.perf_counter() - start
+        route_label = _route_template(request.url.path, route) if route is not None else "unmatched"
+        metrics.http_requests.labels("api", request.method, route_label, str(status)).inc()
+        metrics.http_duration.labels("api", route_label).observe(elapsed)
         log.info(
             "http_request",
             extra={
@@ -320,6 +327,7 @@ async def _start(thread_id: str, kind: str, payload: dict, principal: auth.Princ
     try:
         return await orch.start(thread_id, kind, payload, _end_user(principal), principal.tenant_id)
     except orchestrator.Busy:
+        metrics.busy_rejections.inc()
         raise HTTPException(status_code=503, detail="Server busy, try again shortly", headers={"Retry-After": "5"}) from None
     except orchestrator.OrchestratorError:
         log.exception("orchestrator_unavailable")
@@ -363,6 +371,7 @@ async def _enforce(request: Request, scope: str, limit: int) -> None:
     retry_after = await limiter.hit(f"{scope}:{_client_id(request)}", limit)
     if retry_after is not None:
         log.warning("rate_limited", extra={"scope": scope})
+        metrics.rate_limited.labels(scope).inc()
         raise HTTPException(
             status_code=429, detail="Too many requests, slow down", headers={"Retry-After": str(retry_after)}
         )
@@ -637,3 +646,5 @@ def _uuid(value: str) -> str:
 api.include_router(router, prefix="/api/v1", tags=["v1"])
 # Deprecated aliases for web builds that predate /api/v1 (Deprecation + Link headers added above).
 api.include_router(router, prefix="/api", tags=["legacy"], deprecated=True, include_in_schema=False)
+
+telemetry.setup("api", api)

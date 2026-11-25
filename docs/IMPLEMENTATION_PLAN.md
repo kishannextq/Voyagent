@@ -11,9 +11,9 @@ Updated continuously. `[x]` = implemented and verified (how is noted); `[ ]` = n
 - [x] Ruff lint clean; fixed HTTP calls without timeouts in weather MCP server
 - [x] Dockerfiles (non-root, healthchecks) for api and web; Next.js standalone output + security headers
 - [x] docker-compose: postgres(pgvector), redis, api, web, pgAdmin (profile) — config validated; api + standalone web smoke-tested outside Docker
-- [x] Images build in CI and pass Trivy (api: clean of fixable HIGH/CRITICAL; web: only Next.js 14 findings remain, F14). OS upgrades applied, pip/npm removed from runtime images, Node 22 LTS
+- [x] Images build in CI and pass Trivy (api: clean of fixable HIGH/CRITICAL; web: Next.js 14 findings fixed by the upgrade, F14). OS upgrades applied, pip/npm removed from runtime images, Node 22 LTS
 - [ ] Run `docker compose up` end to end (blocked locally: Docker Desktop/WSL unresponsive on dev machine)
-- [x] GitHub Actions CI: typecheck/build, lint/test, gitleaks, image build + Trivy — running on the fork `kishannextq/Voyagent` (owner repo is read-only for this account). First run: api green; gitleaks flagged fake test fixtures (fixed); `npm audit` fails on Next.js 14 advisories (F14, open)
+- [x] GitHub Actions CI: typecheck/build, lint/test, gitleaks, image build + Trivy — running on the fork `kishannextq/Voyagent` (owner repo is read-only for this account). First run: api green; gitleaks flagged fake test fixtures (fixed); `npm audit` failed on Next.js 14 advisories (F14, fixed on `feature/frontend-nextjs`)
 - [x] Design docs (this folder)
 
 ## Phase 2 — API hardening  (`feature/backend-fastapi`, `feature/auth-cognito`)
@@ -29,7 +29,8 @@ Updated continuously. `[x]` = implemented and verified (how is noted); `[ ]` = n
 - [x] Strict CORS (F8)
 - [ ] Request body size limit at the edge/ASGI; rate limiting (Redis)
 - [ ] Alembic migrations for application tables
-- [ ] Upgrade `apps/web` off Next.js 14 (critical advisories, F14) on `feature/frontend-nextjs`
+- [x] `apps/web` upgraded to Next.js 15.5.29 + React 19 (F14) on `feature/frontend-nextjs`: `npm audit --omit=dev` clean; tsc + build; headless-Edge UI run plan→approve against the mock API with no console errors
+- [ ] Next.js 16 upgrade (15.x is on security backports; plan before 15 support ends)
 
 ## Phase 3 — Model gateway  (`feature/model-gateway`)
 - [ ] LiteLLM proxy in compose + config (Groq, Bedrock); orchestrator calls go through it

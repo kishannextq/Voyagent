@@ -15,7 +15,7 @@ observability) are built around it, not as a separate generic product.
 ## 2. Current state (Phase 1 baseline)
 
 ```
-Browser ──HTTPS+SSE──► apps/web (Next.js 14)
+Browser ──HTTPS+SSE──► apps/web (Next.js 15)
                           │  fetch + SSE parser (lib/api.ts)
                           ▼
                     services/api (FastAPI, single process)

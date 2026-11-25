@@ -11,7 +11,7 @@ for what is built and what is planned.
 ## Layout
 
 ```
-apps/web/          Next.js 14 + Tailwind UI
+apps/web/          Next.js 15 + React 19 + Tailwind UI
 services/api/      FastAPI + LangGraph API (agents, MCP tools, human-in-the-loop)
 docs/              Architecture, plan, branch strategy, security, deployment, …
 docker-compose.yml Local stack: web, api, postgres (pgvector), redis, pgAdmin

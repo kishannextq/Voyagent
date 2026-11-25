@@ -119,7 +119,8 @@ jobs:
         working-directory: services/api
       - name: Start mock model server (primary model fails)
         run: |
-          MOCK_LLM_FAIL_MODELS=mock-primary nohup uv run --project services/api \
+          # venv python directly: a lingering `uv run` would hold uv's cache lock at job cleanup
+          MOCK_LLM_FAIL_MODELS=mock-primary nohup services/api/.venv/bin/python -m \
             uvicorn server:app --app-dir tools/mock-llm --host 127.0.0.1 --port 9200 > mock-llm.log 2>&1 &
       - name: Start gateway
         run: |

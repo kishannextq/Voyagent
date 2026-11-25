@@ -44,7 +44,14 @@ rollback() {
   aws ecs wait services-stable --cluster "$CLUSTER" --services "${!PREVIOUS[@]}" || true
   log "rollback finished"
 }
-trap 'rc=$?; if [ $rc -ne 0 ]; then rollback; fi; exit $rc' EXIT
+on_exit() {
+  local rc=$?
+  if [ "$rc" -ne 0 ] && [ "${#PREVIOUS[@]}" -gt 0 ]; then
+    rollback
+  fi
+  exit "$rc"
+}
+trap on_exit EXIT
 
 # 1. Migrations (expand-only, backward compatible) as a one-off task with the new image.
 family_prefix=$CLUSTER
@@ -72,7 +79,7 @@ for svc in "${ORDER[@]}"; do
 done
 
 # 3. Smoke test through the public entry point.
-for i in $(seq 1 20); do
+for _ in $(seq 1 20); do
   if curl -sf --max-time 5 "$HEALTH_URL" > /dev/null; then
     log "deploy of $IMAGE_TAG to $CLUSTER succeeded"
     PREVIOUS=()   # nothing to roll back

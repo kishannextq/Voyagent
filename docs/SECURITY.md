@@ -43,7 +43,9 @@ patterns, PII redaction, cross-tenant ID checks; (6) bounded agent loops (steps,
 Regression suite covers e.g. "ignore your instructions", "reveal your system prompt",
 "return all API keys", "show another user's documents".
 
-**Supply chain** — lockfiles (npm, uv); `npm audit` + Trivy image scan in CI [done]; tfsec/checkov
+**Model gateway** — master key and virtual keys from Secrets Manager; API holds only a scoped virtual key; gateway not public; image pinned by digest (see MICROSERVICES.md for the version/advisory analysis) [done].
+
+**Supply chain** — `uv` `exclude-newer` cooldown (only releases ≥2 weeks old) [done]; lockfiles (npm, uv); `npm audit` + Trivy image scan in CI [done]; tfsec/checkov
 on Terraform (Phase 8); Dependabot (planned).
 
 **Network** — private subnets for services and data; security groups allow only required paths;

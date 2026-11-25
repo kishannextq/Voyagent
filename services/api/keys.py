@@ -44,7 +44,8 @@ def server_keys() -> ApiKeys:
     if _mock_mode():
         return ApiKeys()
     return ApiKeys(
-        groq=os.getenv("GROQ_API_KEY", "").strip(),
+        # LLM credential: the gateway's virtual key when the gateway is configured, else Groq.
+        groq=(os.getenv("LLM_GATEWAY_KEY", "") if os.getenv("LLM_GATEWAY_URL", "").strip() else os.getenv("GROQ_API_KEY", "")).strip(),
         tavily=os.getenv("TAVILY_API_KEY", "").strip(),
         aviationstack=os.getenv("AVIATION_STACK_API_KEY", "").strip(),
         openweather=os.getenv("OPENWEATHER_API_KEY", "").strip(),
@@ -114,6 +115,18 @@ def trigger_fallback(service: str, message: str) -> None:
     if state.fallback is None:
         state.fallback = {"service": service, "message": message}
     state.used_dummy = True
+
+
+_end_user: ContextVar[str] = ContextVar("end_user", default="")
+
+
+def set_end_user(end_user: str) -> None:
+    """Caller identity for model calls (gateway spend tracking / per-user budgets). Not a secret."""
+    _end_user.set(end_user)
+
+
+def end_user() -> str:
+    return _end_user.get()
 
 
 def set_current(keys: ApiKeys):

@@ -1,0 +1,44 @@
+# Gateway test config: same aliases and fallback policy as config.yaml, but the upstream is
+# tools/mock-llm (no real model or keys). "mock-primary" can be made to fail to test fallbacks.
+model_list:
+  - model_name: voyagent-smart
+    litellm_params:
+      model: openai/mock-primary
+      api_base: os.environ/MOCK_LLM_BASE
+      api_key: unused
+      input_cost_per_token: 0.001   # made-up prices so spend/budgets are testable
+      output_cost_per_token: 0.001
+  - model_name: voyagent-smart-backup
+    litellm_params:
+      model: openai/mock-backup
+      api_base: os.environ/MOCK_LLM_BASE
+      api_key: unused
+      input_cost_per_token: 0.001   # made-up prices so spend/budgets are testable
+      output_cost_per_token: 0.001
+  - model_name: voyagent-fast
+    litellm_params:
+      model: openai/mock-fast
+      api_base: os.environ/MOCK_LLM_BASE
+      api_key: unused
+      input_cost_per_token: 0.001   # made-up prices so spend/budgets are testable
+      output_cost_per_token: 0.001
+
+router_settings:
+  fallbacks:
+    - voyagent-smart: ["voyagent-smart-backup"]
+  num_retries: 1
+  timeout: 20
+  allowed_fails: 3
+  cooldown_time: 5
+
+litellm_settings:
+  request_timeout: 20
+  drop_params: true
+  max_end_user_budget_id: default-end-user-budget
+
+# Spend tracking/budgets/virtual keys need the database (CI provides one; locally optional).
+
+general_settings:
+  master_key: os.environ/LITELLM_MASTER_KEY
+  database_url: os.environ/LITELLM_DATABASE_URL
+  proxy_batch_write_at: 1   # flush spend quickly so tests can read it

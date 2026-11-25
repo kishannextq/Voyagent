@@ -15,13 +15,16 @@ from tool_format import fallback_message, is_warning
 log = logging.getLogger("voyagent.agents")
 
 
-async def _llm_text(system: str, prompt: str) -> str:
+async def _llm_text(system: str, prompt: str, role: str = "smart") -> str:
     if not keys.is_live("groq"):
         # No usable Groq key for this run (missing, or an earlier live call failed): dummy data.
         keys.use_dummy()
         return await mock.fake_llm_text(system, prompt)
     try:
-        response = await get_llm(keys.current().groq).ainvoke(
+        llm = get_llm(keys.current().groq, role)
+        if keys.end_user():
+            llm = llm.bind(user=keys.end_user())  # gateway attributes spend and budgets to this user
+        response = await llm.ainvoke(
             [
                 SystemMessage(content=system),
                 HumanMessage(content=prompt),
@@ -72,6 +75,7 @@ async def supervisor_agent(state: TravelState):
     guardrail_raw = await _llm_text(
         "You are an input validation guardrail. Return strict JSON only.",
         guardrail_prompt,
+        role="fast",
     )
 
 
@@ -133,6 +137,7 @@ User request:
     raw = await _llm_text(
         "You route work to specialist agents. Return strict JSON only.",
         prompt,
+        role="fast",
     )
 
 

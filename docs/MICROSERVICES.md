@@ -8,7 +8,7 @@ scaling, deploy cadence, or a security boundary (ARCHITECTURE.md D2/D3).
 | `web` | exists (`apps/web`) | Next.js UI, SSR, Cognito session | none | api |
 | `api` | exists (`services/api`), monolithic today | BFF: authn/z, tenancy, validation, rate limits, input rails, SSE relay | `app` schema: tenants, users, conversations, plans | orchestrator, rag |
 | `orchestrator` | planned (extract from api) | LangGraph agents, tool execution, memory, HITL | `orchestrator` schema: checkpoints, long-term memory | model-gateway, rag, tools |
-| `model-gateway` | planned | LiteLLM proxy: routing, fallback, keys, cache, spend | `litellm` schema: keys, budgets, spend logs | Bedrock, Groq, HF |
+| `model-gateway` | **done** (`services/model-gateway`) | LiteLLM proxy: routing, fallback, keys, cache, spend | own database `litellm`: keys, budgets, spend logs | Groq (Bedrock configured, not enabled) |
 | `rag` | planned | Retrieval, reranking, compression, citations | `rag` schema: documents, chunks, embeddings | model-gateway (embeddings/rerank) |
 | `ingest-worker` | planned | Async document pipeline from SQS | writes `rag` schema via rag-owned contract*, S3 objects | S3, model-gateway |
 
@@ -42,3 +42,24 @@ Libraries (in-process, shared via a `packages/` workspace): `guardrails`, `promp
 | Tools | `mcp_client.py`: AviationStack + Weather via stdio MCP subprocesses, Tavily via hosted MCP |
 | State | `state.py` `TravelState`; checkpointed per `thread_id` |
 | Tests | `tests/test_api_mock.py` |
+
+## model-gateway details
+
+- **Image**: `ghcr.io/berriai/litellm` **v1.108.5 (LTS)** pinned by digest
+  (`sha256:008a5916…`), config baked in (`services/model-gateway/Dockerfile`). Chosen as the newest
+  release at least two weeks old. Context: litellm 1.82.7/1.82.8 on PyPI were compromised in
+  March 2026 (BerriAI issue #24518); Docker images were reported unaffected. Known advisory after
+  1.108.5: GHSA-2rwg-2wh4-7c4f (HIGH) only affects `azure/` models, which this config does not
+  use; upgrade to ≥1.108.6 before adding Azure. GHSA-w5h5-479w-p5hx (JWT/SSO email fallback) does
+  not apply: the gateway's admin UI/SSO is not used and the gateway is not exposed publicly.
+- **Aliases**: `voyagent-fast` (guardrail, routing) and `voyagent-smart` (specialists, itinerary,
+  final plan), each with a backup deployment in `router_settings.fallbacks`; `num_retries: 2`,
+  per-deployment timeouts, cooldown after 3 failures. The API client never retries (`max_retries=0`).
+- **Identity**: the API sends `user = "<tenant>:<sub>"` on every call; LiteLLM records spend per end
+  user and enforces `max_end_user_budget_id` (budget created by `bootstrap.py`). The API uses one
+  virtual key limited to the two aliases, with its own monthly budget and RPM limit.
+- **Cache**: identical requests are served from Redis for 10 minutes.
+- **Not exposed publicly**: reachable only from the api/orchestrator security group in AWS.
+- **Verification**: CI `gateway` job runs the pinned image with Postgres and `tools/mock-llm`
+  (fallback, alias routing, unknown keys refused, virtual-key model scoping, end-user spend and
+  budget enforcement). Not verified: real Groq traffic through the gateway, Bedrock.

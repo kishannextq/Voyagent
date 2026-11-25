@@ -204,7 +204,7 @@ class PostgresRagStore:
                 if row:
                     return _doc(row), True
                 # Serialise version numbering per (tenant, title).
-                await conn.execute("SELECT pg_advisory_xact_lock(hashtext(%s))", (f"{tenant_id}\x00{title}",))
+                await conn.execute("SELECT pg_advisory_xact_lock(hashtext(%s), hashtext(%s))", (tenant_id, title))
                 cur = await conn.execute(
                     "INSERT INTO rag.documents (tenant_id, title, mime, sha256, version, status, scan, content) "
                     "SELECT %s, %s, %s, %s, coalesce(max(version), 0) + 1, 'pending', %s, %s "

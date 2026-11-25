@@ -70,7 +70,7 @@ def client():
 
 def _preflight(client, origin):
     return client.options(
-        "/api/plan/stream",
+        "/api/v1/plan/stream",
         headers={
             "Origin": origin,
             "Access-Control-Request-Method": "POST",
@@ -90,10 +90,10 @@ def test_cors_allows_configured_origin_without_credentials(client):
 def test_cors_rejects_unknown_origin(client):
     r = _preflight(client, "https://evil.example.com")
     assert "access-control-allow-origin" not in r.headers
-    r = client.get("/api/health", headers={"Origin": "https://evil.example.com"})
+    r = client.get("/api/v1/health", headers={"Origin": "https://evil.example.com"})
     assert "access-control-allow-origin" not in r.headers
 
 
 def test_cors_exposes_request_id(client):
-    r = client.get("/api/health", headers={"Origin": "http://localhost:3000"})
+    r = client.get("/api/v1/health", headers={"Origin": "http://localhost:3000"})
     assert "x-request-id" in r.headers["access-control-expose-headers"].lower()

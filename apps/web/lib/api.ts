@@ -63,6 +63,11 @@ async function streamSSE(path: string, body: unknown, onEvent: (e: StreamEvent) 
     signal,
   });
 
+  if (res.status === 429 || res.status === 503) {
+    const wait = res.headers.get("Retry-After");
+    const why = res.status === 429 ? "You're sending requests too quickly." : "The server is busy right now.";
+    throw new Error(`${why} Please try again ${wait ? `in ${wait}s` : "shortly"}.`);
+  }
   if (!res.ok || !res.body) {
     let detail = `${res.status} ${res.statusText}`;
     try {
@@ -109,7 +114,7 @@ export function streamPlan(
   onEvent: (e: StreamEvent) => void,
   signal?: AbortSignal,
 ) {
-  return streamSSE("/api/plan/stream", body, onEvent, signal);
+  return streamSSE("/api/v1/plan/stream", body, onEvent, signal);
 }
 
 export function streamApproval(
@@ -118,7 +123,7 @@ export function streamApproval(
   onEvent: (e: StreamEvent) => void,
   signal?: AbortSignal,
 ) {
-  return streamSSE(`/api/plan/${encodeURIComponent(threadId)}/approve/stream`, body, onEvent, signal);
+  return streamSSE(`/api/v1/plan/${encodeURIComponent(threadId)}/approve/stream`, body, onEvent, signal);
 }
 
 export interface Health {
@@ -129,7 +134,7 @@ export interface Health {
 
 export async function checkHealth(): Promise<Health> {
   try {
-    const res = await fetch(`${API_URL}/api/health`, { cache: "no-store" });
+    const res = await fetch(`${API_URL}/api/v1/health`, { cache: "no-store" });
     if (!res.ok) return { ok: false };
     const j = await res.json().catch(() => ({}));
     return { ok: true, modes: j?.modes };

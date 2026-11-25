@@ -95,7 +95,7 @@ def test_connect_failure_is_redacted_and_not_cached(monkeypatch):
 
 
 async def _plan(client: httpx.AsyncClient, query: str) -> str:
-    r = await client.post("/api/plan/stream", json={"query": query})
+    r = await client.post("/api/v1/plan/stream", json={"query": query})
     assert r.status_code == 200
     return r.text
 
@@ -132,7 +132,7 @@ def test_run_timeout_stops_the_plan(monkeypatch):
     monkeypatch.setattr(mock, "_delay", slow_delay)
     monkeypatch.setattr(server, "RUN_TIMEOUT_SECONDS", 0.3)
     with TestClient(server.api) as client:
-        r = client.post("/api/plan/stream", json={"query": "3 days in Rome"})
+        r = client.post("/api/v1/plan/stream", json={"query": "3 days in Rome"})
     assert "event: error" in r.text
     assert "longer than" in r.text
     assert "event: done" not in r.text
@@ -141,10 +141,10 @@ def test_run_timeout_stops_the_plan(monkeypatch):
 def test_busy_server_returns_503(monkeypatch):
     with TestClient(server.api) as client:
         monkeypatch.setattr(server, "_run_slots", asyncio.Semaphore(0))
-        r = client.post("/api/plan/stream", json={"query": "3 days in Rome"})
+        r = client.post("/api/v1/plan/stream", json={"query": "3 days in Rome"})
         assert r.status_code == 503
         assert r.headers["retry-after"] == "5"
-        assert client.get("/api/health").status_code == 200  # reads are unaffected
+        assert client.get("/api/v1/health").status_code == 200  # reads are unaffected
 
 
 def test_runs_have_a_step_limit():

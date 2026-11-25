@@ -44,9 +44,12 @@ def http(method: str, path: str, body=None, timeout: float = 60):
 
 
 def wait_healthy(path="/api/v1/health", timeout=120) -> bool:
+    """Wait for the full stack: health is 200 even when degraded, so require status "ok"
+    (orchestrator reachable)."""
     end = time.time() + timeout
     while time.time() < end:
-        if http("GET", path, timeout=5)[0] == 200:
+        status, body = http("GET", path, timeout=5)
+        if status == 200 and '"status":"ok"' in body.replace(" ", ""):
             return True
         time.sleep(2)
     return False

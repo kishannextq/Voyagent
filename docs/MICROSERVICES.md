@@ -6,8 +6,8 @@ scaling, deploy cadence, or a security boundary (ARCHITECTURE.md D2/D3).
 | Service | Status | Responsibility | Owns data | Calls |
 |---|---|---|---|---|
 | `web` | exists (`apps/web`) | Next.js UI, SSR, Cognito session | none | api |
-| `api` | exists (`services/api`), monolithic today | BFF: authn/z, tenancy, validation, rate limits, input rails, SSE relay | `app` schema: tenants, users, conversations, plans | orchestrator, rag |
-| `orchestrator` | planned (extract from api) | LangGraph agents, tool execution, memory, HITL | `orchestrator` schema: checkpoints, long-term memory | model-gateway, rag, tools |
+| `api` | **done** (`services/api`, `server.py`) | BFF: authn/z, tenancy, validation, rate limits, SSE relay | `app.threads` (ownership) | orchestrator, rag |
+| `orchestrator` | **done** (`orchestrator_app.py`, same image as api) | LangGraph agents, tool execution, memory, HITL | checkpoints (library tables), `app.user_memory` | model-gateway, rag, tools |
 | `model-gateway` | **done** (`services/model-gateway`) | LiteLLM proxy: routing, fallback, keys, cache, spend | own database `litellm`: keys, budgets, spend logs | Groq (Bedrock configured, not enabled) |
 | `rag` | planned | Retrieval, reranking, compression, citations | `rag` schema: documents, chunks, embeddings | model-gateway (embeddings/rerank) |
 | `ingest-worker` | planned | Async document pipeline from SQS | writes `rag` schema via rag-owned contract*, S3 objects | S3, model-gateway |
@@ -63,3 +63,14 @@ Libraries (in-process, shared via a `packages/` workspace): `guardrails`, `promp
 - **Verification**: CI `gateway` job runs the pinned image with Postgres and `tools/mock-llm`
   (fallback, alias routing, unknown keys refused, virtual-key model scoping, end-user spend and
   budget enforcement). Not verified: real Groq traffic through the gateway, Bedrock.
+
+## orchestrator details
+
+- One image, two deployables: `uvicorn server:api` (public api) and `uvicorn orchestrator_app:app`
+  (internal). Splitting the image later is cheap; sharing it now avoids duplicated dependencies.
+- Internal API (`/internal/v1/...`): modes, thread snapshot, start/resume run (SSE), delete thread,
+  get/delete memory. Every call needs `X-Internal-Token` (constant-time compare; required outside
+  local/test) and carries `X-Request-ID`. No OpenAPI/docs endpoints.
+- The api authenticates the user, checks ownership and rate limits, then relays the orchestrator's
+  SSE bytes unchanged. Orchestrator full → 503 to the client before any bytes; unreachable → 502.
+- Agent behaviour is configured in `agents/*.md` (see `agent_config.py`).

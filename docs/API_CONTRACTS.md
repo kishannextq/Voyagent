@@ -23,6 +23,9 @@ unversioned `/api/...` paths for older web builds; those responses carry `Deprec
 | POST | `/api/v1/plan/stream` | `PlanRequest` | `text/event-stream` | requests + runs |
 | GET | `/api/v1/plans?limit=20&before=<ts>&all_users=false` | — | `{items:[{thread_id, created_at, owner}], next_before}` newest first; `all_users` needs `admin` (403) | requests |
 | GET | `/api/v1/plan/{thread_id}` | — | `PlanResponse` · 404 if unknown or not yours | requests |
+| DELETE | `/api/v1/plans/{thread_id}` | — | 204; deletes checkpoints, run metadata, ownership · 404 if not yours | requests |
+| GET | `/api/v1/me/memory` | — | `{enabled, preferences:{home_city?,travel_style?,budget_level?,last_destination?}, retention_days}` | requests |
+| DELETE | `/api/v1/me/memory` | — | 204; forgets all preferences | requests |
 | POST | `/api/v1/plan/{thread_id}/approve` | `ApprovalRequest` | `PlanResponse` · 409 if not awaiting approval | requests + runs |
 | POST | `/api/v1/plan/{thread_id}/approve/stream` | `ApprovalRequest` | `text/event-stream` · 409 | requests + runs |
 
@@ -70,5 +73,5 @@ Request bodies reject unknown fields (`422`). Provider keys are server-side only
 - `thread_id` server-generated, stored with owner; access checked on every read/resume [done].
 - Errors as `application/problem+json`: `{type, title, status, detail, trace_id}`.
 - SSE frames gain `id:` for resumption and a periodic `: keepalive` comment (≤15 s) for proxies.
-- `GET /api/v1/plans` [done]; `DELETE /api/v1/plans/{id}` [planned].
+- `GET /api/v1/plans`, `DELETE /api/v1/plans/{id}` [done].
 - Response header `traceparent` echoed for client-side correlation.

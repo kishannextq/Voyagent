@@ -59,24 +59,49 @@ services:
       postgres: { condition: service_healthy }
       redis: { condition: service_healthy }
 
-  api:
+  # Internal: runs plans (graph, tools, provider keys, checkpoints, memory). Not published.
+  orchestrator:
     build: ./services/api
+    command: ["sh", "-c", "exec uvicorn orchestrator_app:app --host 0.0.0.0 --port 8001"]
     env_file:
-      - path: .env
+      - path: .env   # provider keys live only here, never in the public api
         required: false
     environment:
       DATABASE_URL: postgresql://${POSTGRES_USER:-voyagent}:${POSTGRES_PASSWORD:-voyagent_local_only}@postgres:5432/${POSTGRES_DB:-voyagent}
       REDIS_URL: redis://redis:6379/0
       APP_ENV: ${APP_ENV:-local}
       MOCK_MODE: ${MOCK_MODE:-true}
-      FRONTEND_ORIGINS: ${FRONTEND_ORIGINS:-http://localhost:3000}
       CHECKPOINTER_SETUP: "false"  # done by the migrate service
-      AUTH_MODE: ${AUTH_MODE:-disabled}
+      ORCHESTRATOR_TOKEN: ${ORCHESTRATOR_TOKEN:-local-only-orchestrator-token}
       LLM_GATEWAY_URL: ${LLM_GATEWAY_URL:-}
       LLM_GATEWAY_KEY: ${LLM_GATEWAY_KEY:-}
-    ports: ["127.0.0.1:8000:8000"]
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8001/internal/v1/health', timeout=2)"]
+      interval: 15s
+      timeout: 3s
+      retries: 3
     depends_on:
       migrate: { condition: service_completed_successfully }
+      redis: { condition: service_healthy }
+
+  # Public API: auth, limits, ownership; relays runs to the orchestrator. No provider keys.
+  api:
+    build: ./services/api
+    environment:
+      DATABASE_URL: postgresql://${POSTGRES_USER:-voyagent}:${POSTGRES_PASSWORD:-voyagent_local_only}@postgres:5432/${POSTGRES_DB:-voyagent}
+      REDIS_URL: redis://redis:6379/0
+      APP_ENV: ${APP_ENV:-local}
+      MOCK_MODE: ${MOCK_MODE:-true}
+      FRONTEND_ORIGINS: ${FRONTEND_ORIGINS:-http://localhost:3000}
+      AUTH_MODE: ${AUTH_MODE:-disabled}
+      COGNITO_REGION: ${COGNITO_REGION:-}
+      COGNITO_USER_POOL_ID: ${COGNITO_USER_POOL_ID:-}
+      COGNITO_CLIENT_IDS: ${COGNITO_CLIENT_IDS:-}
+      ORCHESTRATOR_URL: http://orchestrator:8001
+      ORCHESTRATOR_TOKEN: ${ORCHESTRATOR_TOKEN:-local-only-orchestrator-token}
+    ports: ["127.0.0.1:8000:8000"]
+    depends_on:
+      orchestrator: { condition: service_healthy }
       redis: { condition: service_healthy }
 
   web:

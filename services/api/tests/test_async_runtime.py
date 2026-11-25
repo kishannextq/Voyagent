@@ -15,6 +15,7 @@ from fastapi.testclient import TestClient  # noqa: E402
 import graph  # noqa: E402
 import mcp_client  # noqa: E402
 import mock  # noqa: E402
+import orchestrator  # noqa: E402
 import server  # noqa: E402
 
 PID_SERVER = str(pathlib.Path(__file__).parent / "pid_mcp_server.py")
@@ -130,7 +131,7 @@ def test_run_timeout_stops_the_plan(monkeypatch):
         await asyncio.sleep(5)
 
     monkeypatch.setattr(mock, "_delay", slow_delay)
-    monkeypatch.setattr(server, "RUN_TIMEOUT_SECONDS", 0.3)
+    monkeypatch.setenv("RUN_TIMEOUT_SECONDS", "0.3")
     with TestClient(server.api) as client:
         r = client.post("/api/v1/plan/stream", json={"query": "3 days in Rome"})
     assert "event: error" in r.text
@@ -140,7 +141,7 @@ def test_run_timeout_stops_the_plan(monkeypatch):
 
 def test_busy_server_returns_503(monkeypatch):
     with TestClient(server.api) as client:
-        monkeypatch.setattr(server, "_run_slots", asyncio.Semaphore(0))
+        monkeypatch.setattr(server.orch, "slots", asyncio.Semaphore(0))
         r = client.post("/api/v1/plan/stream", json={"query": "3 days in Rome"})
         assert r.status_code == 503
         assert r.headers["retry-after"] == "5"
@@ -148,4 +149,4 @@ def test_busy_server_returns_503(monkeypatch):
 
 
 def test_runs_have_a_step_limit():
-    assert server._config("abc")["recursion_limit"] == graph.RECURSION_LIMIT <= 30
+    assert orchestrator.config("abc")["recursion_limit"] == graph.RECURSION_LIMIT <= 30

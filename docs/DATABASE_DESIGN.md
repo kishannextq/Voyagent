@@ -25,6 +25,18 @@ app.threads(thread_id text pk check (thread_id ~ '^[A-Za-z0-9_-]{8,64}$'),
 ```
 `owner_sub` is the Cognito `sub`; `tenant_id` comes from the token's tenant claim (or `user:<sub>`).
 
+```sql
+-- 0002: long-term memory (allow-listed keys only, expiry required)
+app.user_memory(owner text /* "<tenant>:<sub>" */, key text check (key in ('home_city','travel_style',
+                'budget_level','last_destination')), value text check (1..80 chars),
+                updated_at timestamptz, expires_at timestamptz, primary key (owner, key))
+  index (expires_at)
+```
+
+Retention: `maintenance.py purge` (scheduled) deletes expired memory and plans older than
+`PLAN_RETENTION_DAYS` (default 365) together with their checkpoints. Users can delete a plan
+(`DELETE /api/v1/plans/{id}`) or all memory (`DELETE /api/v1/me/memory`) at any time.
+
 LangGraph checkpoint tables are library-managed. Run metadata (`modes`, `fallback`, `dummy_nodes`) lives in Redis under `api:run:{thread_id}`
 with a TTL (`RUN_META_TTL_SECONDS`, default 7 days); it moves to `app.plan_runs` once usage accounting lands.
 

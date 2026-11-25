@@ -16,6 +16,7 @@ from pathlib import Path
 from langchain_mcp_adapters.client import MultiServerMCPClient
 from langchain_mcp_adapters.tools import load_mcp_tools
 
+import agent_config
 import keys
 import mock
 import tool_format
@@ -30,6 +31,8 @@ PROJECT_DIR = Path(__file__).resolve().parent
 AVIATIONSTACK_MCP_PYTHON = os.getenv("AVIATIONSTACK_MCP_PYTHON", sys.executable)
 WEATHER_MCP_PYTHON = os.getenv("WEATHER_MCP_PYTHON", sys.executable)
 TAVILY_MCP_URL = os.getenv("TAVILY_MCP_URL", "https://mcp.tavily.com/mcp/")
+# stdio tool servers start under OS resource limits (sandbox_exec.py).
+SANDBOX = str(PROJECT_DIR / "sandbox_exec.py")
 WEATHER_MCP_SCRIPT = os.getenv("WEATHER_MCP_SCRIPT", str(PROJECT_DIR / "weather_mcp_server.py"))
 
 
@@ -62,15 +65,15 @@ def _connection(service: str, key: str) -> dict:
     if service == "aviationstack":
         return {
             "transport": "stdio",
-            "command": AVIATIONSTACK_MCP_PYTHON,
-            "args": ["-m", "aviationstack_mcp", "mcp", "run"],
+            "command": sys.executable,
+            "args": [SANDBOX, AVIATIONSTACK_MCP_PYTHON, "-m", "aviationstack_mcp", "mcp", "run"],
             "env": _server_env(AVIATION_STACK_API_KEY=key),
         }
     if service == "openweather":
         return {
             "transport": "stdio",
-            "command": WEATHER_MCP_PYTHON,
-            "args": [WEATHER_MCP_SCRIPT],
+            "command": sys.executable,
+            "args": [SANDBOX, WEATHER_MCP_PYTHON, WEATHER_MCP_SCRIPT],
             "cwd": str(PROJECT_DIR),
             "env": _server_env(OPENWEATHER_API_KEY=key),
         }
@@ -229,7 +232,9 @@ async def _tool(key_field: str, tool_name: str, args: dict, dummy):
 
     A live failure (rejected key, rate limit, network) switches the rest of the run to
     dummy data, so the plan still completes through all agents.
+    The calling agent must have the tool in its allow-list (agents/<name>.md), live or not.
     """
+    agent_config.check_tool(key_field, tool_name)
     if keys.is_live(key_field):
         try:
             return await call_tool(key_field, tool_name, args)

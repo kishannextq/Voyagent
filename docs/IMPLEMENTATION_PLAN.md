@@ -11,7 +11,8 @@ Updated continuously. `[x]` = implemented and verified (how is noted); `[ ]` = n
 - [x] Ruff lint clean; fixed HTTP calls without timeouts in weather MCP server
 - [x] Dockerfiles (non-root, healthchecks) for api and web; Next.js standalone output + security headers
 - [x] docker-compose: postgres(pgvector), redis, api, web, pgAdmin (profile) — config validated; api + standalone web smoke-tested outside Docker
-- [ ] Build images and run `docker compose up` end to end (blocked locally: Docker Desktop/WSL unresponsive on dev machine; CI `images` job builds them)
+- [x] Images build in CI and pass Trivy (api: clean of fixable HIGH/CRITICAL; web: only Next.js 14 findings remain, F14). OS upgrades applied, pip/npm removed from runtime images, Node 22 LTS
+- [ ] Run `docker compose up` end to end (blocked locally: Docker Desktop/WSL unresponsive on dev machine)
 - [x] GitHub Actions CI: typecheck/build, lint/test, gitleaks, image build + Trivy — running on the fork `kishannextq/Voyagent` (owner repo is read-only for this account). First run: api green; gitleaks flagged fake test fixtures (fixed); `npm audit` fails on Next.js 14 advisories (F14, open)
 - [x] Design docs (this folder)
 

@@ -1,3 +1,5 @@
+import { accessToken } from "@/lib/auth";
+
 export const API_URL = (process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000").replace(/\/$/, "");
 export const GITHUB_URL = process.env.NEXT_PUBLIC_GITHUB_URL || "https://github.com/websitecreatr99/Voyagent";
 
@@ -56,13 +58,17 @@ export type StreamEvent =
 
 /** POST a JSON body and parse the Server-Sent Events response stream. */
 async function streamSSE(path: string, body: unknown, onEvent: (e: StreamEvent) => void, signal?: AbortSignal) {
+  const headers: Record<string, string> = { "Content-Type": "application/json", Accept: "text/event-stream" };
+  const token = await accessToken();
+  if (token) headers.Authorization = `Bearer ${token}`;
   const res = await fetch(`${API_URL}${path}`, {
     method: "POST",
-    headers: { "Content-Type": "application/json", Accept: "text/event-stream" },
+    headers,
     body: JSON.stringify(body),
     signal,
   });
 
+  if (res.status === 401) throw new Error("Please sign in to plan a trip (your session may have expired).");
   if (res.status === 429 || res.status === 503) {
     const wait = res.headers.get("Retry-After");
     const why = res.status === 429 ? "You're sending requests too quickly." : "The server is busy right now.";
@@ -110,7 +116,7 @@ async function streamSSE(path: string, body: unknown, onEvent: (e: StreamEvent) 
 }
 
 export function streamPlan(
-  body: { query: string; user_id: string; thread_id?: string | null },
+  body: { query: string; thread_id?: string | null },
   onEvent: (e: StreamEvent) => void,
   signal?: AbortSignal,
 ) {

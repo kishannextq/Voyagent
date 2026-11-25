@@ -31,6 +31,16 @@ services:
       timeout: 3s
       retries: 10
 
+  # One-shot: app schema (Alembic) + checkpointer tables, like the pre-deploy task in AWS.
+  migrate:
+    build: ./services/api
+    command: ["python", "migrate.py"]
+    environment:
+      DATABASE_URL: postgresql://${POSTGRES_USER:-voyagent}:${POSTGRES_PASSWORD:-voyagent_local_only}@postgres:5432/${POSTGRES_DB:-voyagent}
+    depends_on:
+      postgres: { condition: service_healthy }
+    restart: "no"
+
   api:
     build: ./services/api
     env_file:
@@ -42,9 +52,11 @@ services:
       APP_ENV: ${APP_ENV:-local}
       MOCK_MODE: ${MOCK_MODE:-true}
       FRONTEND_ORIGINS: ${FRONTEND_ORIGINS:-http://localhost:3000}
+      CHECKPOINTER_SETUP: "false"  # done by the migrate service
+      AUTH_MODE: ${AUTH_MODE:-disabled}
     ports: ["127.0.0.1:8000:8000"]
     depends_on:
-      postgres: { condition: service_healthy }
+      migrate: { condition: service_completed_successfully }
       redis: { condition: service_healthy }
 
   web:

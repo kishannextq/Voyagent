@@ -31,7 +31,8 @@ cd apps/web && npx tsc --noEmit && npm run build
 | staging | pre-prod validation | AWS account `staging` (Terraform) | synthetic |
 | production | customers | AWS account `prod` (Terraform) | real, backed up |
 
-API runtime settings: `APP_ENV` (`staging`/`production` require `DATABASE_URL` and `REDIS_URL`),
+API runtime settings: `AUTH_MODE` (`cognito`, required in staging/production) with `COGNITO_REGION`,
+`COGNITO_USER_POOL_ID` (or `COGNITO_ISSUER`), `COGNITO_CLIENT_IDS`, `AUTH_TENANT_CLAIM`; `APP_ENV` (`staging`/`production` require `DATABASE_URL` and `REDIS_URL`),
 `FRONTEND_ORIGINS` (comma-separated, required in deployed envs), optional `FRONTEND_ORIGIN_REGEX`,
 `CHECKPOINTER_SETUP=false` on services (run setup as a migration task), `PG_POOL_MAX`, `LOG_LEVEL`,
 `MAX_CONCURRENT_RUNS` (per process, default 32; 503 beyond), `RUN_TIMEOUT_SECONDS` (default 300),
@@ -53,6 +54,7 @@ Secrets Manager; no `.env` files beyond local.
 - **Images**: GitHub Actions (OIDC role, no long-lived AWS keys) → build → Trivy → push to ECR (immutable tags = git SHA).
 - **Compute**: ECS Fargate service per deployable, private subnets, autoscaling on CPU + request count (+ queue depth for workers).
 - **Ingress**: Route 53 → CloudFront (+WAF, ACM cert in us-east-1) → ALB (ACM regional cert) → target groups. ALB idle timeout raised for SSE.
+- **Migrations**: `python migrate.py` as a one-off ECS task with the new image before the service update.
 - **Rollout**: ECS rolling deploy with deployment circuit breaker + automatic rollback; health-check gated; migrations as a pre-deploy one-off task.
 - **Rollback**: redeploy previous task definition revision (`aws ecs update-service --task-definition <prev>`); DB migrations are backward-compatible (expand/contract).
 - **State**: Terraform state in S3 (versioned, KMS) with native S3 lockfile; one state per env.

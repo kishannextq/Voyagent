@@ -7,7 +7,8 @@ ENV UV_COMPILE_BYTECODE=1 UV_LINK_MODE=copy UV_PYTHON_DOWNLOADS=never
 WORKDIR /app
 COPY pyproject.toml uv.lock ./
 RUN --mount=type=cache,target=/root/.cache/uv uv sync --frozen --no-dev
-COPY *.py ./
+COPY *.py alembic.ini ./
+COPY migrations ./migrations
 
 FROM python:3.13-slim AS runtime
 # OS security updates; drop pip (not needed at runtime; its vendored libs carry CVEs).

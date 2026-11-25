@@ -18,6 +18,7 @@ jobs:
     outputs:
       web: ${{ steps.filter.outputs.web }}
       api: ${{ steps.filter.outputs.api }}
+      gateway: ${{ steps.filter.outputs.gateway }}
     steps:
       - uses: actions/checkout@v4
       - uses: dorny/paths-filter@v3
@@ -26,6 +27,7 @@ jobs:
           filters: |
             web: ['apps/web/**', '.github/workflows/ci.yml']
             api: ['services/api/**', '.github/workflows/ci.yml']
+            gateway: ['services/model-gateway/**', 'tools/mock-llm/**', 'services/api/config.py', 'services/api/tests/test_gateway.py', '.github/workflows/ci.yml']
 
   web:
     needs: changes
@@ -88,6 +90,64 @@ jobs:
         run: uv run ruff format --check tests
       - name: Tests (mock mode + Postgres integration)
         run: uv run pytest -q -rs
+
+  # Real LiteLLM image (digest-pinned) + Postgres + mock upstream: fallbacks, virtual keys,
+  # end-user spend and budgets, through the API's own client code.
+  gateway:
+    needs: changes
+    if: needs.changes.outputs.gateway == 'true'
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: pgvector/pgvector:pg17
+        env:
+          POSTGRES_USER: ci
+          POSTGRES_PASSWORD: ci_only
+          POSTGRES_DB: litellm
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U ci -d litellm"
+          --health-interval 5s --health-timeout 3s --health-retries 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+        with:
+          version: "0.13.7"
+          enable-cache: true
+          cache-dependency-glob: services/api/uv.lock
+      - run: uv sync --frozen
+        working-directory: services/api
+      - name: Start mock model server (primary model fails)
+        run: |
+          MOCK_LLM_FAIL_MODELS=mock-primary nohup uv run --project services/api \
+            uvicorn server:app --app-dir tools/mock-llm --host 127.0.0.1 --port 9200 > mock-llm.log 2>&1 &
+      - name: Start gateway
+        run: |
+          IMAGE=$(sed -n 's/^FROM //p' services/model-gateway/Dockerfile)
+          docker run -d --name gateway --network host \
+            -e LITELLM_MASTER_KEY=sk-ci-master-key \
+            -e LITELLM_DATABASE_URL=postgresql://ci:ci_only@127.0.0.1:5432/litellm \
+            -e MOCK_LLM_BASE=http://127.0.0.1:9200/v1 \
+            -v "$PWD/services/model-gateway/config.test.yaml:/app/config.yaml:ro" \
+            "$IMAGE" --config /app/config.yaml --port 4000
+          for i in $(seq 1 90); do
+            curl -sf http://127.0.0.1:4000/health/readiness > /dev/null && exit 0
+            sleep 2
+          done
+          docker logs gateway | tail -50; exit 1
+      - name: Gateway tests (must not skip)
+        working-directory: services/api
+        env:
+          GATEWAY_TEST_URL: http://127.0.0.1:4000
+          GATEWAY_MASTER_KEY: sk-ci-master-key
+          MOCK_LLM_URL: http://127.0.0.1:9200
+          GATEWAY_TEST_DB: "1"
+        run: |
+          uv run pytest -q -rs tests/test_gateway.py | tee gw.txt
+          ! grep -q SKIPPED gw.txt
+      - name: Gateway logs
+        if: failure()
+        run: docker logs gateway | tail -100; cat mock-llm.log | tail -30
 
   secrets-scan:
     runs-on: ubuntu-latest

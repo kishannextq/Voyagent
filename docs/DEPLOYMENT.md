@@ -31,6 +31,11 @@ cd apps/web && npx tsc --noEmit && npm run build
 | staging | pre-prod validation | AWS account `staging` (Terraform) | synthetic |
 | production | customers | AWS account `prod` (Terraform) | real, backed up |
 
+Model gateway: `LLM_GATEWAY_URL`, `LLM_GATEWAY_KEY` (API side; virtual key from
+`services/model-gateway/bootstrap.py`), `LLM_MODEL_FAST`/`LLM_MODEL_SMART` (aliases),
+`LLM_TIMEOUT_SECONDS`. Gateway side: `LITELLM_MASTER_KEY`, `LITELLM_DATABASE_URL`, `GROQ_API_KEY`,
+`REDIS_HOST`/`REDIS_PORT`.
+
 API runtime settings: `AUTH_MODE` (`cognito`, required in staging/production) with `COGNITO_REGION`,
 `COGNITO_USER_POOL_ID` (or `COGNITO_ISSUER`), `COGNITO_CLIENT_IDS`, `AUTH_TENANT_CLAIM`; `APP_ENV` (`staging`/`production` require `DATABASE_URL` and `REDIS_URL`),
 `FRONTEND_ORIGINS` (comma-separated, required in deployed envs), optional `FRONTEND_ORIGIN_REGEX`,

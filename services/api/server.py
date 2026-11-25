@@ -330,6 +330,10 @@ async def _new_thread_id(req: "PlanRequest", principal: auth.Principal) -> str:
     return thread_id
 
 
+def _end_user(principal: auth.Principal) -> str:
+    return f"{principal.tenant_id}:{principal.sub}"
+
+
 async def _authorize(thread_id: str, principal: auth.Principal) -> None:
     """404 (not 403) for plans the caller can't access, so IDs can't be probed."""
     rec = await thread_store.get(thread_id)
@@ -377,10 +381,10 @@ def _check_capacity() -> None:
         raise HTTPException(status_code=503, detail="Server busy, try again shortly", headers={"Retry-After": "5"})
 
 
-async def _run_blocking(graph_input: Any, thread_id: str, api_keys: keys.ApiKeys) -> PlanResponse:
+async def _run_blocking(graph_input: Any, thread_id: str, api_keys: keys.ApiKeys, end_user: str = "") -> PlanResponse:
     """Same run as the stream (incl. dummy-data fallback), returning only the final state."""
     # aclosing: release the run slot and the graph stream even if we stop early.
-    async with aclosing(_stream_graph(graph_input, thread_id, api_keys)) as frames:
+    async with aclosing(_stream_graph(graph_input, thread_id, api_keys, end_user)) as frames:
         async for frame in frames:
             if frame.startswith("event: error"):
                 message = json.loads(frame.split("data: ", 1)[1])["message"]
@@ -392,7 +396,9 @@ def _sse(event: str, data: Any) -> str:
     return f"event: {event}\ndata: {json.dumps(data, default=str)}\n\n"
 
 
-async def _stream_graph(graph_input: Any, thread_id: str, api_keys: keys.ApiKeys) -> AsyncIterator[str]:
+async def _stream_graph(
+    graph_input: Any, thread_id: str, api_keys: keys.ApiKeys, end_user: str = ""
+) -> AsyncIterator[str]:
     """Run the graph on the event loop and emit one SSE event per completed node.
 
     Provider keys and the per-run state live in ContextVars set here, in the task that
@@ -408,6 +414,7 @@ async def _stream_graph(graph_input: Any, thread_id: str, api_keys: keys.ApiKeys
         yield _sse("start", {"thread_id": thread_id, "modes": modes})
 
         keys.set_current(api_keys)
+        keys.set_end_user(end_user)
         run = keys.start_run()
         dummy = meta["dummy_nodes"]
         announced = False
@@ -565,7 +572,7 @@ async def create_plan(req: PlanRequest, principal: Caller):
     """Run the agents until the human-approval checkpoint (waits for the result)."""
     _check_capacity()
     thread_id = await _new_thread_id(req, principal)
-    return await _run_blocking(_initial_input(req, principal), thread_id, keys.resolve())
+    return await _run_blocking(_initial_input(req, principal), thread_id, keys.resolve(), _end_user(principal))
 
 
 @router.post("/plan/stream", dependencies=_RUN)
@@ -574,7 +581,7 @@ async def create_plan_stream(req: PlanRequest, principal: Caller):
     _check_capacity()
     thread_id = await _new_thread_id(req, principal)
     return StreamingResponse(
-        _stream_graph(_initial_input(req, principal), thread_id, keys.resolve()),
+        _stream_graph(_initial_input(req, principal), thread_id, keys.resolve(), _end_user(principal)),
         media_type="text/event-stream",
         headers=_SSE_HEADERS,
     )
@@ -598,7 +605,7 @@ async def approve_plan(thread_id: str, body: ApprovalRequest, principal: Caller)
     if current.status != "awaiting_approval":
         raise HTTPException(status_code=409, detail="Thread is not awaiting approval")
     _check_capacity()
-    return await _run_blocking(Command(resume=body.resume_value()), thread_id, keys.resolve())
+    return await _run_blocking(Command(resume=body.resume_value()), thread_id, keys.resolve(), _end_user(principal))
 
 
 @router.post("/plan/{thread_id}/approve/stream", dependencies=_RUN)
@@ -609,7 +616,7 @@ async def approve_plan_stream(thread_id: str, body: ApprovalRequest, principal: 
         raise HTTPException(status_code=409, detail="Thread is not awaiting approval")
     _check_capacity()
     return StreamingResponse(
-        _stream_graph(Command(resume=body.resume_value()), thread_id, keys.resolve()),
+        _stream_graph(Command(resume=body.resume_value()), thread_id, keys.resolve(), _end_user(principal)),
         media_type="text/event-stream",
         headers=_SSE_HEADERS,
     )

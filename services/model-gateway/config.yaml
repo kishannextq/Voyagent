@@ -1,0 +1,64 @@
+# Voyagent model gateway (LiteLLM proxy, pinned in docker-compose.yml / Dockerfile).
+# The API calls two aliases; routing, retries, fallbacks, caching and spend tracking live here.
+#   voyagent-fast  : guardrail + supervisor routing (short JSON answers)
+#   voyagent-smart : specialist analysis, itinerary, final plan
+# No secrets in this file: every credential is read from the environment (os.environ/...).
+
+model_list:
+  - model_name: voyagent-smart
+    litellm_params:
+      model: groq/llama-3.3-70b-versatile
+      api_key: os.environ/GROQ_API_KEY
+      timeout: 60
+  - model_name: voyagent-smart-backup
+    litellm_params:
+      model: groq/llama-3.1-8b-instant
+      api_key: os.environ/GROQ_API_KEY
+      timeout: 60
+  - model_name: voyagent-fast
+    litellm_params:
+      model: groq/llama-3.1-8b-instant
+      api_key: os.environ/GROQ_API_KEY
+      timeout: 20
+  - model_name: voyagent-fast-backup
+    litellm_params:
+      model: groq/llama-3.3-70b-versatile
+      api_key: os.environ/GROQ_API_KEY
+      timeout: 30
+  # Amazon Bedrock (AWS): uses the task's IAM role; no keys here. Not in the fallback chain
+  # until enabled and verified in an AWS account (see docs/MICROSERVICES.md, Phase 8).
+  # - model_name: voyagent-smart-bedrock
+  #   litellm_params:
+  #     model: bedrock/anthropic.claude-sonnet-4-5-20250929-v1:0
+  #     aws_region_name: os.environ/AWS_REGION
+
+router_settings:
+  # Failover order per alias. Retries happen here only (the API client does not retry).
+  fallbacks:
+    - voyagent-smart: ["voyagent-smart-backup"]
+    - voyagent-fast: ["voyagent-fast-backup"]
+  num_retries: 2
+  timeout: 60
+  allowed_fails: 3      # failures before a deployment is cooled down
+  cooldown_time: 30     # seconds
+  # Shared cooldown/rate state across gateway replicas.
+  redis_host: os.environ/REDIS_HOST
+  redis_port: os.environ/REDIS_PORT
+
+litellm_settings:
+  request_timeout: 60
+  drop_params: true
+  # Response cache for identical requests (same model + messages), shared via Redis.
+  cache: true
+  cache_params:
+    type: redis
+    host: os.environ/REDIS_HOST
+    port: os.environ/REDIS_PORT
+    ttl: 600
+  # Per end-user budget (end user = the `user` field the API sends: "<tenant>:<sub>").
+  # The budget itself is created once via the admin API (scripts/bootstrap.sh); needs database_url.
+  max_end_user_budget_id: default-end-user-budget
+
+general_settings:
+  master_key: os.environ/LITELLM_MASTER_KEY
+  database_url: os.environ/LITELLM_DATABASE_URL

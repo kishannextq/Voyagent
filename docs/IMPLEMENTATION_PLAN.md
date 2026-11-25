@@ -34,9 +34,11 @@ Updated continuously. `[x]` = implemented and verified (how is noted); `[ ]` = n
 - [ ] Next.js 16 upgrade (15.x is on security backports; plan before 15 support ends)
 
 ## Phase 3 — Model gateway  (`feature/model-gateway`)
-- [ ] LiteLLM proxy in compose + config (Groq, Bedrock); orchestrator calls go through it
-- [ ] Routing policy (task, latency, context, cost), fallback chain, timeouts, retries with caps
-- [ ] Virtual keys per tenant, budgets, Redis cache, spend logs to Postgres
+- [x] LiteLLM v1.108.5 (digest-pinned) in compose (`--profile gateway`) + config; API calls models only through it when `LLM_GATEWAY_URL` is set (Bedrock configured but not enabled: needs AWS)
+- [x] Routing by task (`fast`/`smart` aliases), fallback chain, timeouts, capped retries (gateway only)
+- [x] Virtual key for the API scoped to the aliases with budget + RPM; per-end-user (tenant:sub) spend and budgets; Redis response cache; spend in the gateway's Postgres DB — CI `gateway` job with the real image
+- [ ] Per-tenant virtual keys (one key per tenant) once tenants are provisioned objects
+- [x] Supply-chain cooldown for Python deps: `uv` `exclude-newer` (releases ≥2 weeks old)
 
 ## Phase 4 — Orchestration & agents  (`feature/ai-orchestration`)
 - [ ] Extract `orchestrator` service; api relays its stream

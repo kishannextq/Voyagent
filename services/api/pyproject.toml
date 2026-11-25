@@ -9,7 +9,7 @@ dependencies = [
     "pydantic==2.13.4",
     "python-dotenv==1.2.2",
     "requests==2.34.2",
-    "langchain-core==1.4.0",
+    "langchain-core==1.7.7",
     "langchain-groq==1.1.2",
     "langchain-mcp-adapters==0.2.2",
     "langgraph==1.2.4",
@@ -23,6 +23,7 @@ dependencies = [
     "pyjwt[crypto]==2.15.1",
     "alembic==1.20.1",
     "sqlalchemy==2.1.8",
+    "langchain-openai==1.7.4",
 ]
 
 [dependency-groups]
@@ -34,6 +35,8 @@ dev = [
 ]
 
 [tool.uv]
+# Supply-chain cooldown: resolve only releases published before this date (bump deliberately).
+exclude-newer = "2026-11-11T00:00:00Z"
 package = false
 
 [tool.pytest.ini_options]

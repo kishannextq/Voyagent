@@ -1,0 +1,6 @@
+# Fake secrets in redaction/env-isolation test fixtures (committed before they were
+# rewritten to be assembled at runtime). Exact fingerprints only: never ignore whole paths.
+cb842a5be630f8fb8e71a20f78c9a9d5a3ca6e76:services/api/tests/test_logging.py:aws-access-token:47
+cb842a5be630f8fb8e71a20f78c9a9d5a3ca6e76:services/api/tests/test_logging.py:jwt:48
+cb842a5be630f8fb8e71a20f78c9a9d5a3ca6e76:services/api/tests/test_logging.py:generic-api-key:59
+8b1f51669fe768bf71273b1d1deae837c45163a7:services/api/tests/test_mcp_and_cors.py:generic-api-key:18

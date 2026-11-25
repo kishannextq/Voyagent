@@ -12,9 +12,10 @@ from langchain_mcp_adapters.client import MultiServerMCPClient  # noqa: E402
 import mcp_client  # noqa: E402
 import server  # noqa: E402
 
+# Fake values (assembled so secret scanners don't flag the test itself).
 SECRET_VARS = {
-    "GROQ_API_KEY": "gsk_server_secret_value_123",
-    "TAVILY_API_KEY": "tvly-server-secret-value-123",
+    "GROQ_API_KEY": "gsk_" + "server_secret_value_123",
+    "TAVILY_API_KEY": "tvly-" + "server-secret-value-123",
     "AVIATION_STACK_API_KEY": "aviation-secret-123",
     "OPENWEATHER_API_KEY": "weather-secret-123",
     "DATABASE_URL": "postgresql://u:dbpass@db/x",

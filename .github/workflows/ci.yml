@@ -20,6 +20,7 @@ jobs:
       api: ${{ steps.filter.outputs.api }}
       gateway: ${{ steps.filter.outputs.gateway }}
       observability: ${{ steps.filter.outputs.observability }}
+      infra: ${{ steps.filter.outputs.infra }}
     steps:
       - uses: actions/checkout@v4
       - uses: dorny/paths-filter@v3
@@ -28,6 +29,7 @@ jobs:
           filters: |
             web: ['apps/web/**', '.github/workflows/ci.yml']
             api: ['services/api/**', '.github/workflows/ci.yml']
+            infra: ['infra/terraform/**', 'infra/deploy/**', '.github/workflows/**']
             observability: ['infra/observability/**', 'docker-compose.yml', '.github/workflows/ci.yml']
             gateway: ['services/model-gateway/**', 'tools/mock-llm/**', 'services/api/config.py', 'services/api/tests/test_gateway.py', '.github/workflows/ci.yml']
 
@@ -193,6 +195,32 @@ jobs:
       - name: Stack logs
         if: failure()
         run: docker compose --profile observability ps; docker compose --profile observability logs --tail 60 api orchestrator otel-collector tempo loki prometheus
+
+  # Infrastructure as code and delivery scripts: nothing is applied, only checked.
+  infra:
+    needs: changes
+    if: needs.changes.outputs.infra == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: 1.17.1
+          terraform_wrapper: false
+      - name: terraform fmt
+        run: terraform fmt -check -recursive infra/terraform
+      - name: terraform validate
+        working-directory: infra/terraform/envs
+        run: terraform init -backend=false -input=false && terraform validate
+      - uses: astral-sh/setup-uv@v6
+        with:
+          version: "0.13.7"
+      - name: checkov (security scan of the Terraform)
+        run: uvx --python 3.12 --from checkov==3.4.3 checkov -d infra/terraform --framework terraform --compact --quiet
+      - name: shellcheck deploy script
+        run: shellcheck infra/deploy/deploy.sh
+      - name: actionlint (workflows)
+        run: docker run --rm -v "$PWD:/repo" -w /repo rhysd/actionlint:1.7.12 -color
 
   secrets-scan:
     runs-on: ubuntu-latest

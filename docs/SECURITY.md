@@ -47,6 +47,8 @@ Regression suite covers e.g. "ignore your instructions", "reveal your system pro
 
 **Documents (RAG)** — type from content not filename; size/page limits; optional malware-scan hook (required via `RAG_REQUIRE_SCAN` in deployed envs); uploads/deletes for tenant admins only; every query filtered by tenant (tested, incl. pgvector); retrieved text delimited and neutralised (`</documents>` look-alikes), framed as data, cited [n]; retrieval failures never break a plan [done]. OCR/macro-bearing formats not accepted.
 
+**Infrastructure** (Terraform, not applied) — private app subnets, isolated data subnets without internet routes, VPC endpoints, flow logs; KMS everywhere (RDS, cache, secrets, logs, ECR, scheduler); RDS TLS-only with Secrets-Manager-managed password; cache TLS + auth; ALB TLS 1.3 policy + WAF (managed rules, rate limit, logging); per-service task roles (only the gateway may call Bedrock, scoped ARNs); GitHub OIDC deploy role limited to one repo/environment; immutable ECR tags with scan on push; checkov clean with justified skips.
+
 **Service-to-service** — api → orchestrator with a shared token (`ORCHESTRATOR_TOKEN`, Secrets Manager; constant-time check; required outside local/test) plus network isolation (security groups) [done in code; SGs in Phase 8].
 
 **Model gateway** — master key and virtual keys from Secrets Manager; API holds only a scoped virtual key; gateway not public; image pinned by digest (see MICROSERVICES.md for the version/advisory analysis) [done].

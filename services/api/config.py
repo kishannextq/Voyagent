@@ -8,7 +8,25 @@ load_dotenv()
 TAVILY_API_KEY = os.getenv("TAVILY_API_KEY")
 AVIATION_STACK_API_KEY = os.getenv("AVIATION_STACK_API_KEY")
 OPENWEATHER_API_KEY = os.getenv("OPENWEATHER_API_KEY")
-DATABASE_URL = os.getenv("DATABASE_URL")
+
+
+def _database_url() -> str | None:
+    """DATABASE_URL, or one built from parts (AWS: RDS-managed password injected by ECS from
+    Secrets Manager as DB_PASSWORD; TLS required). Exported so every module sees the same value."""
+    url = os.getenv("DATABASE_URL")
+    host = os.getenv("DB_HOST")
+    if url or not host:
+        return url
+    from urllib.parse import quote
+
+    user = quote(os.environ["DB_USER"], safe="")
+    password = quote(os.environ["DB_PASSWORD"], safe="")
+    url = f"postgresql://{user}:{password}@{host}:{os.getenv('DB_PORT', '5432')}/{os.getenv('DB_NAME', 'voyagent')}?sslmode=require"
+    os.environ["DATABASE_URL"] = url
+    return url
+
+
+DATABASE_URL = _database_url()
 
 # Model gateway (LiteLLM, services/model-gateway). When set, every model call goes through it:
 # routing, retries, fallbacks, caching, budgets and spend logs live there, not in this service.

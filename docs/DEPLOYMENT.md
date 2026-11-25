@@ -67,7 +67,7 @@ leave `DATABASE_URL` unset (in-memory checkpointer) or use Docker/WSL.
 Separate AWS accounts per environment (AWS Organizations). Config via env vars; secrets from
 Secrets Manager; no `.env` files beyond local.
 
-## AWS target (planned — nothing is provisioned without explicit authorization)
+## AWS target (Terraform in `infra/terraform`, deploy workflow in `.github/workflows/deploy.yml`: written and checked in CI, never applied or run — see `infra/terraform/README.md`)
 
 - **Images**: GitHub Actions (OIDC role, no long-lived AWS keys) → build → Trivy → push to ECR (immutable tags = git SHA).
 - **Compute**: ECS Fargate service per deployable, private subnets, autoscaling on CPU + request count (+ queue depth for workers).

@@ -1,0 +1,7 @@
+# Copy to production.backend.hcl. The bucket must exist first (versioned, KMS-encrypted, public
+# access blocked, access limited to the deploy/ops roles) - created by an operator, not here.
+bucket       = "REPLACE-voyagent-terraform-state"
+key          = "production/terraform.tfstate"
+region       = "eu-west-1"
+encrypt      = true
+use_lockfile = true

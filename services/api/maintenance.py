@@ -15,6 +15,8 @@ import sys
 
 from psycopg.rows import dict_row
 
+import config  # noqa: F401 - builds DATABASE_URL from DB_* parts when needed
+
 
 async def purge(database_url: str) -> dict:
     from langgraph.checkpoint.postgres.aio import AsyncPostgresSaver

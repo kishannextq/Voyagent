@@ -43,6 +43,10 @@ patterns, PII redaction, cross-tenant ID checks; (6) bounded agent loops (steps,
 Regression suite covers e.g. "ignore your instructions", "reveal your system prompt",
 "return all API keys", "show another user's documents".
 
+**Agents and tools** — per-agent tool allow-lists, per-node timeouts and LLM-call budgets, per-run LLM-call budget (`agents/*.md`, enforced in code) [done]; stdio tool servers start under rlimits (memory, files, file size, processes, no core dumps, umask 077) with only their own key [done]; network/filesystem isolation of tools [planned, Phase 8]. Remembered preferences are allow-listed structured values, sanitised, passed to the model as quoted data, expire after 180 days, and are user-deletable [done].
+
+**Service-to-service** — api → orchestrator with a shared token (`ORCHESTRATOR_TOKEN`, Secrets Manager; constant-time check; required outside local/test) plus network isolation (security groups) [done in code; SGs in Phase 8].
+
 **Model gateway** — master key and virtual keys from Secrets Manager; API holds only a scoped virtual key; gateway not public; image pinned by digest (see MICROSERVICES.md for the version/advisory analysis) [done].
 
 **Supply chain** — `uv` `exclude-newer` cooldown (only releases ≥2 weeks old) [done]; lockfiles (npm, uv); `npm audit` + Trivy image scan in CI [done]; tfsec/checkov

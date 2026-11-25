@@ -31,6 +31,12 @@ cd apps/web && npx tsc --noEmit && npm run build
 | staging | pre-prod validation | AWS account `staging` (Terraform) | synthetic |
 | production | customers | AWS account `prod` (Terraform) | real, backed up |
 
+Orchestrator: api uses `ORCHESTRATOR_URL` + `ORCHESTRATOR_TOKEN` (unset URL = in-process). Orchestrator
+service: `uvicorn orchestrator_app:app --port 8001` with `ORCHESTRATOR_TOKEN`, provider keys, `DATABASE_URL`,
+`REDIS_URL`; agent budgets `RUN_MAX_LLM_CALLS` (20); memory `MEMORY_ENABLED`, `MEMORY_RETENTION_DAYS` (180);
+tool sandbox `SANDBOX_MAX_MEMORY_BYTES`, `SANDBOX_MAX_OPEN_FILES`, `SANDBOX_MAX_FILE_BYTES`, `SANDBOX_MAX_PROCESSES`.
+Scheduled task (daily): `python maintenance.py purge` (`PLAN_RETENTION_DAYS`, default 365).
+
 Model gateway: `LLM_GATEWAY_URL`, `LLM_GATEWAY_KEY` (API side; virtual key from
 `services/model-gateway/bootstrap.py`), `LLM_MODEL_FAST`/`LLM_MODEL_SMART` (aliases),
 `LLM_TIMEOUT_SECONDS`. Gateway side: `LITELLM_MASTER_KEY`, `LITELLM_DATABASE_URL`, `GROQ_API_KEY`,

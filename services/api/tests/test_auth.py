@@ -19,6 +19,7 @@ from cryptography.hazmat.primitives.asymmetric import rsa  # noqa: E402
 from fastapi.testclient import TestClient  # noqa: E402
 
 import auth  # noqa: E402
+import orchestrator  # noqa: E402
 import server  # noqa: E402
 import threads  # noqa: E402
 
@@ -138,10 +139,10 @@ def test_alg_none_rejected(client):
 
 def test_identity_comes_from_token_not_body(client):
     tid = _plan(client, token(sub="alice"))
-    snap = asyncio.run(server.travel_graph.aget_state(server._config(tid)))
+    snap = asyncio.run(server.orch.graph.aget_state(orchestrator.config(tid)))
     assert snap.values["user_id"] == "alice"
     r = client.post("/api/v1/plan", json={**PLAN, "user_id": "mallory"}, headers=bearer(token(sub="alice")))
-    snap = asyncio.run(server.travel_graph.aget_state(server._config(r.json()["thread_id"])))
+    snap = asyncio.run(server.orch.graph.aget_state(orchestrator.config(r.json()["thread_id"])))
     assert snap.values["user_id"] == "alice"
 
 

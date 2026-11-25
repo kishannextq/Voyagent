@@ -115,7 +115,7 @@ def test_generated_thread_id_is_random_and_has_no_user_id(client):
 
 def test_run_metadata_persisted_and_served(client):
     tid = client.post("/api/v1/plan", json={"query": "3 days in Rome"}).json()["thread_id"]
-    meta = asyncio.run(server.runs.get(tid))  # in-memory store: not bound to a loop
+    meta = asyncio.run(server.orch.runs.get(tid))  # in-memory store: not bound to a loop
     assert meta["modes"] == {"llm": "mock", "flights": "mock", "hotels": "mock", "weather": "mock"}
     assert meta["dummy_nodes"]["supervisor"] is True
     assert client.get(f"/api/v1/plan/{tid}").json()["dummy_nodes"] == meta["dummy_nodes"]

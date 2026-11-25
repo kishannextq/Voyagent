@@ -4,7 +4,6 @@ Run:
     uvicorn server:api --reload --port 8000
 """
 
-import asyncio
 import datetime as dt
 import json
 import logging
@@ -12,7 +11,6 @@ import os
 import re
 import time
 import uuid
-from collections.abc import AsyncIterator
 from contextlib import aclosing, asynccontextmanager
 from typing import Annotated, Any
 
@@ -20,8 +18,6 @@ from fastapi import APIRouter, Depends, FastAPI, HTTPException, Query, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, StreamingResponse
-from langchain_core.messages import HumanMessage
-from langgraph.types import Command
 from pydantic import BaseModel, ConfigDict, Field
 
 import logging_setup
@@ -29,13 +25,11 @@ import logging_setup
 logging_setup.configure("api")
 
 import auth  # noqa: E402
-import graph  # noqa: E402
-import keys  # noqa: E402
-import mcp_client  # noqa: E402
+import memory  # noqa: E402
 import mock  # noqa: E402
+import orchestrator  # noqa: E402
 import rate_limit  # noqa: E402
 import redis_conn  # noqa: E402
-import run_store  # noqa: E402
 import threads  # noqa: E402
 from config import DATABASE_URL  # noqa: E402
 
@@ -43,54 +37,31 @@ log = logging.getLogger("voyagent.api")
 
 MOCK_MODE = mock.enabled()
 
-# Fields of TravelState that are safe and useful to send to the client.
-PUBLIC_FIELDS = [
-    "user_query",
-    "trip_constraints",
-    "selected_agents",
-    "supervisor_reasoning",
-    "flight_results",
-    "hotel_results",
-    "weather_results",
-    "budget_results",
-    "itinerary",
-    "approval_request",
-    "human_feedback",
-    "approved",
-    "final_response",
-    "llm_calls",
-]
-
-# Execution bounds (no unbounded agent execution): per-process concurrent runs, and a
-# wall-clock deadline per run (graph.RECURSION_LIMIT bounds the number of steps).
-MAX_CONCURRENT_RUNS = int(os.getenv("MAX_CONCURRENT_RUNS", "32"))
-RUN_TIMEOUT_SECONDS = float(os.getenv("RUN_TIMEOUT_SECONDS", "300"))
-
 # Created in the lifespan, inside the server's event loop (async pools are loop-bound).
-travel_graph: Any = None
-runs: run_store.RunStore = None  # type: ignore[assignment]
+orch: orchestrator.Orchestrator = None  # type: ignore[assignment]
 limiter: rate_limit.Limiter = None  # type: ignore[assignment]
 limits = rate_limit.Limits.from_env()
 thread_store: threads.ThreadStore = None  # type: ignore[assignment]
 authenticator: auth.Authenticator = None  # type: ignore[assignment]
-_run_slots: asyncio.Semaphore | None = None
 
 
 @asynccontextmanager
 async def lifespan(_: FastAPI):
-    """Open stores at startup (fail fast on misconfiguration) and close them on shutdown."""
-    global travel_graph, runs, limiter, limits, thread_store, authenticator, _run_slots
-    _run_slots = asyncio.Semaphore(MAX_CONCURRENT_RUNS)
+    """Open stores at startup (fail fast on misconfiguration) and close them on shutdown.
+
+    Plans run in the orchestrator: in-process by default, or the internal orchestrator service
+    when ORCHESTRATOR_URL is set (then this process holds no provider keys or graph state).
+    """
+    global orch, limiter, limits, thread_store, authenticator
     limits = rate_limit.Limits.from_env()
     authenticator = auth.Authenticator(auth.AuthConfig.from_env())
     log.info("auth_ready", extra={"mode": authenticator.config.mode})
     redis = await redis_conn.connect()
-    store = close_graph = None
+    store = None
     try:
-        runs = run_store.build(redis)
         limiter = rate_limit.build(redis)
         store = thread_store = await threads.open_store(DATABASE_URL)
-        travel_graph, close_graph = await graph.open_graph()
+        orch = await orchestrator.open_from_env()
     except BaseException:
         if store is not None:
             await store.aclose()
@@ -100,8 +71,7 @@ async def lifespan(_: FastAPI):
     try:
         yield
     finally:
-        await mcp_client.aclose_sessions()
-        await close_graph()
+        await orch.aclose()
         await thread_store.aclose()
         if redis is not None:
             await redis.aclose()
@@ -292,36 +262,13 @@ class PlanResponse(BaseModel):
 # ---------- Helpers ----------
 
 
-def _config(thread_id: str) -> dict:
-    return {"configurable": {"thread_id": thread_id}, "recursion_limit": graph.RECURSION_LIMIT}
-
-
-def _public(values: dict[str, Any]) -> dict[str, Any]:
-    return {k: values[k] for k in PUBLIC_FIELDS if k in values}
-
-
-def _initial_input(req: PlanRequest, principal: auth.Principal) -> dict[str, Any]:
-    return {
-        "messages": [HumanMessage(content=req.query)],
-        "user_id": principal.sub,
-        "user_query": req.query,
-        "flight_results": "",
-        "hotel_results": "",
-        "weather_results": "",
-        "budget_results": "",
-        "itinerary": "",
-        "final_response": "",
-        "llm_calls": 0,
-    }
-
-
 async def _new_thread_id(req: "PlanRequest", principal: auth.Principal) -> str:
     """Create the plan's ownership record. Server IDs are 128-bit random with no user identifier.
 
     A client-chosen ID must be new: never let a request write into an existing thread (409).
     """
     thread_id = req.thread_id or uuid.uuid4().hex
-    if req.thread_id and (await travel_graph.aget_state(_config(thread_id))).values:
+    if req.thread_id and await orch.exists(thread_id):
         raise HTTPException(status_code=409, detail="Thread already exists")
     try:
         await thread_store.create(thread_id, principal.tenant_id, principal.sub)
@@ -334,133 +281,46 @@ def _end_user(principal: auth.Principal) -> str:
     return f"{principal.tenant_id}:{principal.sub}"
 
 
-async def _authorize(thread_id: str, principal: auth.Principal) -> None:
+async def _authorize(thread_id: str, principal: auth.Principal) -> threads.ThreadRecord:
     """404 (not 403) for plans the caller can't access, so IDs can't be probed."""
     rec = await thread_store.get(thread_id)
     if rec is None or not auth.can_access(principal, rec.tenant_id, rec.owner_sub):
         if rec is not None:
             log.warning("plan_access_denied", extra={"thread_id": thread_id})
         raise HTTPException(status_code=404, detail=f"Thread '{thread_id}' not found")
+    return rec
 
 
 async def _snapshot(thread_id: str) -> PlanResponse:
-    """Build a response from the checkpointed state of a thread."""
-    snap = await travel_graph.aget_state(_config(thread_id))
-    values = dict(snap.values or {})
-    if not values:
+    snap = await orch.snapshot(thread_id)
+    if snap is None:
         raise HTTPException(status_code=404, detail=f"Thread '{thread_id}' not found")
-
-    interrupt_value = None
-    for task in snap.tasks or ():
-        for intr in getattr(task, "interrupts", ()) or ():
-            interrupt_value = intr.value
-            break
-
-    if interrupt_value is not None:
-        status = "awaiting_approval"
-    elif values.get("final_response") and not values.get("selected_agents") and not values.get("itinerary"):
-        status = "blocked"
-    else:
-        status = "completed"
-
-    meta = await runs.get(thread_id) or {}
-    return PlanResponse(
-        thread_id=thread_id,
-        status=status,
-        state=_public(values),
-        interrupt=interrupt_value,
-        modes=meta.get("modes"),
-        fallback=meta.get("fallback"),
-        dummy_nodes=meta.get("dummy_nodes"),
-    )
+    return PlanResponse(**snap)
 
 
-def _check_capacity() -> None:
-    """Fast 503 when this process is already running its maximum number of plans."""
-    if _run_slots is not None and _run_slots.locked():
-        raise HTTPException(status_code=503, detail="Server busy, try again shortly", headers={"Retry-After": "5"})
+async def _start(thread_id: str, kind: str, payload: dict, principal: auth.Principal):
+    """Start or resume a run; 503 (before any bytes are sent) when the orchestrator is full."""
+    try:
+        return await orch.start(thread_id, kind, payload, _end_user(principal))
+    except orchestrator.Busy:
+        raise HTTPException(status_code=503, detail="Server busy, try again shortly", headers={"Retry-After": "5"}) from None
+    except orchestrator.OrchestratorError:
+        log.exception("orchestrator_unavailable")
+        raise HTTPException(status_code=502, detail="Planner temporarily unavailable") from None
 
 
-async def _run_blocking(graph_input: Any, thread_id: str, api_keys: keys.ApiKeys, end_user: str = "") -> PlanResponse:
+async def _run_blocking(thread_id: str, kind: str, payload: dict, principal: auth.Principal) -> PlanResponse:
     """Same run as the stream (incl. dummy-data fallback), returning only the final state."""
-    # aclosing: release the run slot and the graph stream even if we stop early.
-    async with aclosing(_stream_graph(graph_input, thread_id, api_keys, end_user)) as frames:
-        async for frame in frames:
-            if frame.startswith("event: error"):
-                message = json.loads(frame.split("data: ", 1)[1])["message"]
-                raise HTTPException(status_code=500, detail=message)
+    stream = await _start(thread_id, kind, payload, principal)
+    text = ""
+    # aclosing: release the run slot and the upstream stream even if we stop early.
+    async with aclosing(stream) as frames:
+        async for chunk in frames:
+            text += chunk
+    for block in text.split("\n\n"):
+        if block.startswith("event: error"):
+            raise HTTPException(status_code=500, detail=json.loads(block.split("data: ", 1)[1])["message"])
     return await _snapshot(thread_id)
-
-
-def _sse(event: str, data: Any) -> str:
-    return f"event: {event}\ndata: {json.dumps(data, default=str)}\n\n"
-
-
-async def _stream_graph(
-    graph_input: Any, thread_id: str, api_keys: keys.ApiKeys, end_user: str = ""
-) -> AsyncIterator[str]:
-    """Run the graph on the event loop and emit one SSE event per completed node.
-
-    Provider keys and the per-run state live in ContextVars set here, in the task that
-    serves this request; LangGraph copies the context into the tasks that run each node.
-    """
-    async with _run_slots:
-        modes = keys.modes(api_keys)
-        meta = await runs.get(thread_id) or {}
-        meta["modes"] = modes
-        meta.setdefault("dummy_nodes", {})
-        meta.setdefault("fallback", None)
-        await runs.save(thread_id, meta)
-        yield _sse("start", {"thread_id": thread_id, "modes": modes})
-
-        keys.set_current(api_keys)
-        keys.set_end_user(end_user)
-        run = keys.start_run()
-        dummy = meta["dummy_nodes"]
-        announced = False
-        if meta["fallback"]:
-            # This plan already fell back to dummy data (e.g. during planning): keep the rest of it
-            # (approval -> final plan) on dummy data too, so one plan never mixes live and dummy results.
-            run.fallback = meta["fallback"]
-            announced = True
-        loop = asyncio.get_running_loop()
-        deadline = loop.time() + RUN_TIMEOUT_SECONDS
-        chunks = travel_graph.astream(graph_input, config=_config(thread_id), stream_mode="updates")
-        try:
-            while True:
-                remaining = deadline - loop.time()
-                if remaining <= 0:
-                    raise TimeoutError
-                try:
-                    # Deadline per step, not around the yields (the client may be slow to read).
-                    chunk = await asyncio.wait_for(anext(chunks), remaining)
-                except StopAsyncIteration:
-                    break
-                for node, update in chunk.items():
-                    if node == "__interrupt__":
-                        payload = update[0].value if update else {}
-                        yield _sse("interrupt", {"node": "human_approval", "data": payload})
-                    else:
-                        # Did this agent use dummy data? (read & reset per agent; agents run one at a time)
-                        dummy[node] = run.used_dummy
-                        run.used_dummy = False
-                        await runs.save(thread_id, meta)
-                        yield _sse("node", {"node": node, "data": _public(update or {}), "dummy": dummy[node]})
-                if run.fallback and not announced:
-                    # A live call failed: the run carries on with dummy data. Tell the UI once.
-                    announced = True
-                    meta["fallback"] = run.fallback
-                    await runs.save(thread_id, meta)
-                    yield _sse("fallback", run.fallback)
-            yield _sse("done", (await _snapshot(thread_id)).model_dump())
-        except TimeoutError:
-            log.warning("graph_run_timeout", extra={"thread_id": thread_id, "timeout_s": RUN_TIMEOUT_SECONDS})
-            yield _sse("error", {"message": f"The plan took longer than {RUN_TIMEOUT_SECONDS:.0f}s and was stopped."})
-        except Exception as exc:  # surface errors to the UI instead of dropping the stream
-            log.exception("graph_run_failed", extra={"thread_id": thread_id})
-            yield _sse("error", {"message": keys.redact(str(exc), api_keys)})
-        finally:
-            await chunks.aclose()
 
 
 _SSE_HEADERS = {"Cache-Control": "no-cache", "X-Accel-Buffering": "no"}
@@ -500,6 +360,10 @@ async def limit_runs(request: Request) -> None:
     await _enforce(request, "run", limits.runs_per_minute)
 
 
+def _start_payload(req: "PlanRequest", principal: auth.Principal) -> dict:
+    return {"query": req.query, "user_id": principal.sub}
+
+
 async def current_principal(request: Request) -> auth.Principal:
     return await authenticator(request)
 
@@ -521,7 +385,7 @@ async def health():
     return {
         "status": "ok",
         "mock_mode": MOCK_MODE,
-        "modes": keys.modes(keys.resolve()),
+        "modes": await orch.modes(),
     }
 
 
@@ -570,18 +434,16 @@ async def list_plans(
 @router.post("/plan", response_model=PlanResponse, dependencies=_RUN)
 async def create_plan(req: PlanRequest, principal: Caller):
     """Run the agents until the human-approval checkpoint (waits for the result)."""
-    _check_capacity()
     thread_id = await _new_thread_id(req, principal)
-    return await _run_blocking(_initial_input(req, principal), thread_id, keys.resolve(), _end_user(principal))
+    return await _run_blocking(thread_id, "start", _start_payload(req, principal), principal)
 
 
 @router.post("/plan/stream", dependencies=_RUN)
 async def create_plan_stream(req: PlanRequest, principal: Caller):
     """Same as POST /plan but streams agent progress as Server-Sent Events."""
-    _check_capacity()
     thread_id = await _new_thread_id(req, principal)
     return StreamingResponse(
-        _stream_graph(_initial_input(req, principal), thread_id, keys.resolve(), _end_user(principal)),
+        await _start(thread_id, "start", _start_payload(req, principal), principal),
         media_type="text/event-stream",
         headers=_SSE_HEADERS,
     )
@@ -604,8 +466,7 @@ async def approve_plan(thread_id: str, body: ApprovalRequest, principal: Caller)
     current = await _snapshot(thread_id)
     if current.status != "awaiting_approval":
         raise HTTPException(status_code=409, detail="Thread is not awaiting approval")
-    _check_capacity()
-    return await _run_blocking(Command(resume=body.resume_value()), thread_id, keys.resolve(), _end_user(principal))
+    return await _run_blocking(thread_id, "resume", body.resume_value(), principal)
 
 
 @router.post("/plan/{thread_id}/approve/stream", dependencies=_RUN)
@@ -614,12 +475,42 @@ async def approve_plan_stream(thread_id: str, body: ApprovalRequest, principal: 
     current = await _snapshot(thread_id)
     if current.status != "awaiting_approval":
         raise HTTPException(status_code=409, detail="Thread is not awaiting approval")
-    _check_capacity()
     return StreamingResponse(
-        _stream_graph(Command(resume=body.resume_value()), thread_id, keys.resolve(), _end_user(principal)),
+        await _start(thread_id, "resume", body.resume_value(), principal),
         media_type="text/event-stream",
         headers=_SSE_HEADERS,
     )
+
+
+class MemoryView(BaseModel):
+    enabled: bool
+    preferences: dict[str, str]
+    retention_days: int
+
+
+@router.get("/me/memory", response_model=MemoryView, dependencies=_READ)
+async def get_memory(principal: Caller):
+    """What Voyagent remembers about you (from plans you approved) and for how long."""
+    prefs = await orch.get_memory(_end_user(principal)) if memory.enabled() else {}
+    return MemoryView(enabled=memory.enabled(), preferences=prefs, retention_days=memory.retention().days)
+
+
+@router.delete("/me/memory", status_code=204, dependencies=_READ)
+async def delete_memory(principal: Caller):
+    """Forget all remembered preferences."""
+    await orch.delete_memory(_end_user(principal))
+    log.info("memory_deleted")
+
+
+@router.delete("/plans/{thread_id}", status_code=204, dependencies=_READ)
+async def delete_plan(thread_id: str, principal: Caller):
+    """Delete a plan and its stored state (checkpoints, run metadata, ownership record)."""
+    rec = await _authorize(thread_id, principal)
+    if rec.owner_sub != principal.sub and not principal.is_admin:
+        raise HTTPException(status_code=404, detail=f"Thread '{thread_id}' not found")
+    await orch.delete(thread_id)
+    await thread_store.delete(thread_id)
+    log.info("plan_deleted", extra={"thread_id": thread_id, "by_admin": rec.owner_sub != principal.sub})
 
 
 api.include_router(router, prefix="/api/v1", tags=["v1"])

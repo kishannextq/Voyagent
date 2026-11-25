@@ -26,6 +26,7 @@ RunMeta = dict[str, Any]  # {"modes": {...}, "fallback": {...}|None, "dummy_node
 class RunStore(Protocol):
     async def get(self, thread_id: str) -> RunMeta | None: ...
     async def save(self, thread_id: str, meta: RunMeta) -> None: ...
+    async def delete(self, thread_id: str) -> None: ...
 
 
 class MemoryRunStore:
@@ -55,6 +56,10 @@ class MemoryRunStore:
             while len(self._data) > self._max:
                 self._data.popitem(last=False)
 
+    async def delete(self, thread_id: str) -> None:
+        with self._lock:
+            self._data.pop(thread_id, None)
+
     def __len__(self) -> int:
         return len(self._data)
 
@@ -72,6 +77,9 @@ class RedisRunStore:
 
     async def save(self, thread_id: str, meta: RunMeta) -> None:
         await self._r.set(self.PREFIX + thread_id, json.dumps(meta), ex=self._ttl)
+
+    async def delete(self, thread_id: str) -> None:
+        await self._r.delete(self.PREFIX + thread_id)
 
 
 def build(redis_client) -> RunStore:

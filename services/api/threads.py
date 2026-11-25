@@ -9,14 +9,13 @@ Stores no user content: thread ID, tenant, owner subject, creation time.
 
 import datetime as dt
 import logging
-import os
 import threading
 from dataclasses import dataclass
 from typing import Protocol
 
-from psycopg.rows import dict_row
 from psycopg_pool import AsyncConnectionPool
 
+import db
 import settings
 
 log = logging.getLogger("voyagent.threads")
@@ -37,6 +36,7 @@ class ThreadExists(Exception):
 class ThreadStore(Protocol):
     async def create(self, thread_id: str, tenant_id: str, owner_sub: str) -> ThreadRecord: ...
     async def get(self, thread_id: str) -> ThreadRecord | None: ...
+    async def delete(self, thread_id: str) -> None: ...
     async def list(
         self, tenant_id: str, owner_sub: str | None, limit: int, before: dt.datetime | None = None
     ) -> list[ThreadRecord]: ...
@@ -65,6 +65,10 @@ class MemoryThreadStore:
 
     async def get(self, thread_id: str) -> ThreadRecord | None:
         return self._data.get(thread_id)
+
+    async def delete(self, thread_id: str) -> None:
+        with self._lock:
+            self._data.pop(thread_id, None)
 
     async def list(self, tenant_id, owner_sub, limit, before=None):
         rows = [
@@ -105,6 +109,10 @@ class PostgresThreadStore:
             row = await cur.fetchone()
         return ThreadRecord(**row) if row else None
 
+    async def delete(self, thread_id: str) -> None:
+        async with self._pool.connection() as conn:
+            await conn.execute("DELETE FROM app.threads WHERE thread_id = %s", (thread_id,))
+
     async def list(self, tenant_id, owner_sub, limit, before=None):
         sql = "SELECT thread_id, tenant_id, owner_sub, created_at FROM app.threads WHERE tenant_id = %s"
         params: list = [tenant_id]
@@ -132,24 +140,6 @@ async def open_store(database_url: str | None) -> ThreadStore:
             raise RuntimeError(f"DATABASE_URL is required when APP_ENV={settings.app_env()}")
         log.warning("thread_store_ready", extra={"backend": "memory", "note": "local/test only"})
         return MemoryThreadStore()
-    timeout = float(os.getenv("PG_POOL_TIMEOUT", "10"))
-    pool = AsyncConnectionPool(
-        database_url,
-        min_size=1,
-        max_size=int(os.getenv("PG_APP_POOL_MAX", "5")),
-        timeout=timeout,
-        kwargs={"autocommit": True, "prepare_threshold": 0, "row_factory": dict_row, "connect_timeout": 5},
-        open=False,
-        name="app",
-    )
-    try:
-        await pool.open(wait=True, timeout=timeout)
-        async with pool.connection() as conn:
-            cur = await conn.execute("SELECT to_regclass('app.threads') AS t")
-            if (await cur.fetchone())["t"] is None:
-                raise RuntimeError("Database schema missing: run migrations (python migrate.py)")
-    except BaseException:
-        await pool.close()
-        raise
+    pool = await db.open_pool(database_url, "app", required_table="app.threads")
     log.info("thread_store_ready", extra={"backend": "postgres"})
     return PostgresThreadStore(pool)

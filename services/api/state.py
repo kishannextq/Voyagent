@@ -8,6 +8,8 @@ class TravelState(TypedDict, total=False):
     messages: Annotated[list[AnyMessage], operator.add]
     user_id: str
     user_query: str
+    # Remembered preferences (memory.py): data for the supervisor, never instructions.
+    user_memory: dict[str, str]
 
     trip_constraints: dict[str, Any]
     selected_agents: list[str]

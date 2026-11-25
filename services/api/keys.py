@@ -82,6 +82,7 @@ class RunState:
     def __init__(self):
         self.fallback: dict | None = None
         self.used_dummy = False
+        self.llm_calls = 0  # model calls in this run (budget: agent_config.RUN_MAX_LLM_CALLS)
 
 
 _run: ContextVar["RunState | None"] = ContextVar("run_state", default=None)

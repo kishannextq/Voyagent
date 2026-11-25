@@ -88,6 +88,10 @@ def test_postgres_state_survives_new_instance_and_concurrency(monkeypatch):
             ):
                 pass
             assert "approved" in (await replica_a.aget_state(cfg)).values["final_response"].lower()
+
+            # Deleting a plan removes its checkpoints for every replica.
+            await replica_b.checkpointer.adelete_thread(ids[0])
+            assert not (await replica_a.aget_state(cfg)).values
         finally:
             await close_a()
             await close_b()

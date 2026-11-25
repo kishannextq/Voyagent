@@ -97,3 +97,46 @@ def test_cors_rejects_unknown_origin(client):
 def test_cors_exposes_request_id(client):
     r = client.get("/api/v1/health", headers={"Origin": "http://localhost:3000"})
     assert "x-request-id" in r.headers["access-control-expose-headers"].lower()
+
+
+# ---------------- sandbox ----------------
+
+
+def test_stdio_servers_start_through_the_sandbox():
+    for service in ("openweather", "aviationstack"):
+        conn = mcp_client._connection(service, "k")
+        assert conn["args"][0].endswith("sandbox_exec.py")
+
+
+@pytest.mark.skipif(os.name != "posix", reason="rlimits are POSIX-only (containers run Linux)")
+def test_sandbox_applies_resource_limits():
+    import subprocess
+    import sys
+
+    code = (
+        "import resource, os, json;"
+        "print(json.dumps({n: resource.getrlimit(getattr(resource, n))[0] for n in "
+        "['RLIMIT_AS','RLIMIT_NOFILE','RLIMIT_FSIZE','RLIMIT_CORE']} | {'umask': os.umask(0)}))"
+    )
+    out = subprocess.run(
+        [sys.executable, mcp_client.SANDBOX, sys.executable, "-c", code],
+        capture_output=True,
+        text=True,
+        check=True,
+        env={"PATH": os.environ.get("PATH", ""), "SANDBOX_MAX_OPEN_FILES": "64"},
+    )
+    import json
+
+    limits = json.loads(out.stdout)
+    assert limits["RLIMIT_NOFILE"] == 64
+    assert limits["RLIMIT_AS"] == 1024 * 1024 * 1024
+    assert limits["RLIMIT_FSIZE"] == 16 * 1024 * 1024
+    assert limits["RLIMIT_CORE"] == 0
+    assert limits["umask"] == 0o077
+
+
+def test_aviationstack_server_starts_in_sandbox(secret_env):
+    """Spawns the real aviationstack stdio server (through the sandbox) and lists its tools."""
+    client = MultiServerMCPClient({"aviationstack": mcp_client._connection("aviationstack", "fake-key")})
+    tools = asyncio.run(asyncio.wait_for(client.get_tools(), timeout=90))
+    assert {"list_airports", "list_airlines"} <= {t.name for t in tools}

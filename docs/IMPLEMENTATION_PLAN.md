@@ -41,10 +41,13 @@ Updated continuously. `[x]` = implemented and verified (how is noted); `[ ]` = n
 - [x] Supply-chain cooldown for Python deps: `uv` `exclude-newer` (releases ≥2 weeks old)
 
 ## Phase 4 — Orchestration & agents  (`feature/ai-orchestration`)
-- [ ] Extract `orchestrator` service; api relays its stream
-- [ ] Agent config: `agent.md` / `soul.md`, capabilities, tool allow-lists, step/time/token budgets
-- [ ] Sandboxed tool execution (no host code execution); Step Functions for long workflows
-- [ ] Long-term memory with retention/deletion policy
+- [x] `orchestrator` service (`orchestrator_app.py`, same image, internal only, service token); api relays its SSE stream and holds no provider keys; in-process mode for local/tests — 9 tests + live two-process browser run with request IDs shared across services
+- [x] Agent config: `agents/soul.md` + `agents/<node>.md` (model, tool allow-list, per-node LLM-call budget and timeout), validated at startup and enforced at runtime; per-run LLM-call budget — 9 tests
+- [ ] Token budgets per run (needs real usage metadata; gateway enforces spend budgets meanwhile)
+- [x] Tool processes under OS resource limits (`sandbox_exec.py`) + minimal env; no tool executes host code — real servers spawned in the sandbox in CI
+- [ ] Stronger tool isolation (separate task/microVM with egress allow-list) — Phase 8
+- [ ] Step Functions for long workflows: not needed yet (runs are bounded at minutes and stream synchronously); revisit if plans need durable waits beyond the SSE window
+- [x] Long-term memory: allow-listed preferences from approved plans, 180-day expiry, `GET/DELETE /api/v1/me/memory`, opt-out flag; `DELETE /api/v1/plans/{id}`; `maintenance.py purge` (expired memory + plans older than `PLAN_RETENTION_DAYS`) — 7 tests incl. Postgres
 
 ## Phase 5 — RAG  (`feature/rag-engine`, `feature/document-processing`)
 - [ ] Ingestion: S3 upload, validation, malware scan hook, extraction/OCR, dedupe, versioning, status

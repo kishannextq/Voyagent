@@ -11,6 +11,13 @@ export default function Markdown({ children, className = "" }: { children: strin
         components={{
           // Drop the mdast `node` prop so it is not rendered as a DOM attribute.
           a: ({ node: _node, ...props }) => <a {...props} target="_blank" rel="noopener noreferrer" />,
+          // GFM task-list checkboxes are read-only; give them an accessible name (WCAG 4.1.2).
+          input: ({ node: _node, ...props }) =>
+            props.type === "checkbox" ? (
+              <input {...props} aria-label={props.checked ? "Done" : "To do"} />
+            ) : (
+              <input {...props} />
+            ),
           table: ({ node: _node, ...props }) => (
             <div className="not-prose overflow-x-auto rounded-xl border border-white/10">
               <table className="w-full text-left text-xs text-slate-300 [&_td]:border-t [&_td]:border-white/5 [&_td]:px-3 [&_td]:py-2 [&_th]:bg-white/5 [&_th]:px-3 [&_th]:py-2 [&_th]:font-semibold [&_th]:text-white" {...props} />

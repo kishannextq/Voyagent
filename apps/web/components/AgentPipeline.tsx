@@ -66,7 +66,7 @@ export default function AgentPipeline({ statuses }: { statuses: Record<NodeId, N
               </div>
               <div className="relative mt-3">
                 <div className="flex items-baseline gap-1.5">
-                  <span className="text-[10px] font-medium text-slate-500">{String(i + 1).padStart(2, "0")}</span>
+                  <span className="text-[10px] font-medium text-slate-400">{String(i + 1).padStart(2, "0")}</span>
                   <span className="font-display font-semibold">{agent.name}</span>
                 </div>
                 <p className="mt-0.5 text-xs text-slate-400">{agent.blurb}</p>
@@ -78,7 +78,7 @@ export default function AgentPipeline({ statuses }: { statuses: Record<NodeId, N
                       ? "text-amber-300"
                       : status === "done"
                       ? "text-emerald-300"
-                      : "text-slate-500"
+                      : "text-slate-400"
                   }`}
                 >
                   {STATUS_LABEL[status]}
@@ -101,6 +101,6 @@ function StatusDot({ status }: { status: NodeStatus }) {
         <Check className="h-3 w-3 text-emerald-300" />
       </span>
     );
-  if (status === "skipped") return <Minus className="h-4 w-4 text-slate-500" />;
+  if (status === "skipped") return <Minus className="h-4 w-4 text-slate-400" />;
   return <span className="mt-1 h-2 w-2 rounded-full bg-slate-600" />;
 }

@@ -379,6 +379,11 @@ class RemoteOrchestrator:
         try:
             async for text in resp.aiter_text():
                 yield text
+        except httpx.HTTPError as e:
+            # The orchestrator went away mid-plan: end the client's stream cleanly with an error
+            # event instead of a cut connection. The plan's last checkpoint is kept.
+            log.error("orchestrator_stream_lost", extra={"error_type": type(e).__name__})
+            yield "\n\n" + sse("error", {"message": "The planner stopped unexpectedly. Please try again."})
         finally:
             await resp.aclose()
 

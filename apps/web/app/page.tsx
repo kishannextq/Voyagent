@@ -331,9 +331,9 @@ export default function Home() {
                 <Plane className="h-5 w-5 -rotate-12 text-white" />
               </span>
               <div className="min-w-0">
-                <p className="text-xs font-semibold uppercase tracking-[0.2em] text-slate-500">Your request</p>
+                <p className="text-xs font-semibold uppercase tracking-[0.2em] text-slate-400">Your request</p>
                 <p className="mt-1 text-base text-white sm:text-lg">{submittedQuery}</p>
-                {threadId && <p className="mt-1 font-mono text-[11px] text-slate-500">thread · {threadId}</p>}
+                {threadId && <p className="mt-1 font-mono text-[11px] text-slate-400">thread · {threadId}</p>}
               </div>
             </div>
             <button className="btn-ghost shrink-0 px-4 py-2.5 text-sm" onClick={reset}>
@@ -391,7 +391,7 @@ export default function Home() {
                     <div className="mt-4 flex flex-wrap gap-2">
                       {constraints.map(([k, v]) => (
                         <span key={k} className="chip">
-                          <span className="capitalize text-slate-500">{k.replace(/_/g, " ")}</span>
+                          <span className="capitalize text-slate-400">{k.replace(/_/g, " ")}</span>
                           <span className="text-slate-100">{Array.isArray(v) ? v.join(", ") : String(v)}</span>
                         </span>
                       ))}
@@ -462,9 +462,9 @@ export default function Home() {
         </div>
       )}
 
-      <footer className="flex flex-col items-center gap-2 pb-10 pt-6 text-center text-xs text-slate-600">
+      <footer className="flex flex-col items-center gap-2 pb-10 pt-6 text-center text-xs text-slate-400">
         <span>Built with Next.js · FastAPI · LangGraph · MCP</span>
-        <a href={GITHUB_URL} target="_blank" rel="noopener noreferrer" className="inline-flex items-center gap-1.5 text-slate-500 transition hover:text-white">
+        <a href={GITHUB_URL} target="_blank" rel="noopener noreferrer" className="inline-flex items-center gap-1.5 text-slate-400 transition hover:text-white">
           <Github className="h-3.5 w-3.5" /> View source on GitHub
         </a>
       </footer>

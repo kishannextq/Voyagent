@@ -130,3 +130,35 @@ def test_cannot_start_new_plan_in_existing_thread(client):
 @pytest.mark.parametrize("bad", ["short", "has space here", "../../etc/passwd", "x" * 65])
 def test_client_thread_id_format_validated(client, bad):
     assert client.post("/api/v1/plan", json={"query": "3 days in Rome", "thread_id": bad}).status_code == 422
+
+
+def test_redis_outage_degrades_metadata_but_not_plans():
+    class Down:
+        async def get(self, *_):
+            raise ConnectionError("redis down")
+
+        set = delete = get
+
+    async def go():
+        store = run_store.RedisRunStore(Down())
+        assert await store.get("t") is None
+        await store.save("t", META)  # no exception
+        await store.delete("t")
+
+    asyncio.run(go())
+
+
+def test_plan_completes_while_run_metadata_store_is_down(monkeypatch):
+    class Down:
+        async def get(self, *_):
+            raise ConnectionError("redis down")
+
+        set = delete = get
+
+    with TestClient(server.api) as c:
+        monkeypatch.setattr(server.orch, "runs", run_store.RedisRunStore(Down()))
+        body = c.post("/api/v1/plan", json={"query": "3 days in Rome"}).json()
+        assert body["status"] == "awaiting_approval"
+        assert (
+            c.post(f"/api/v1/plan/{body['thread_id']}/approve", json={"approved": True}).json()["status"] == "completed"
+        )

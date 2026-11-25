@@ -71,15 +71,32 @@ class RedisRunStore:
         self._r = client
         self._ttl = ttl
 
+    # Run metadata is advisory (UI labels: live/demo, fallback notice): a Redis outage degrades
+    # those labels but never fails a plan. Errors are logged and counted.
+
     async def get(self, thread_id: str) -> RunMeta | None:
-        raw = await self._r.get(self.PREFIX + thread_id)
+        try:
+            raw = await self._r.get(self.PREFIX + thread_id)
+        except Exception as e:
+            _degraded("get", e)
+            return None
         return json.loads(raw) if raw else None
 
     async def save(self, thread_id: str, meta: RunMeta) -> None:
-        await self._r.set(self.PREFIX + thread_id, json.dumps(meta), ex=self._ttl)
+        try:
+            await self._r.set(self.PREFIX + thread_id, json.dumps(meta), ex=self._ttl)
+        except Exception as e:
+            _degraded("save", e)
 
     async def delete(self, thread_id: str) -> None:
-        await self._r.delete(self.PREFIX + thread_id)
+        try:
+            await self._r.delete(self.PREFIX + thread_id)
+        except Exception as e:
+            _degraded("delete", e)
+
+
+def _degraded(op: str, e: Exception) -> None:
+    log.warning("run_store_unavailable", extra={"op": op, "error_type": type(e).__name__})
 
 
 def build(redis_client) -> RunStore:

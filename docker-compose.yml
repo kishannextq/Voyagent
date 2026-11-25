@@ -72,6 +72,7 @@ services:
       APP_ENV: ${APP_ENV:-local}
       MOCK_MODE: ${MOCK_MODE:-true}
       CHECKPOINTER_SETUP: "false"  # done by the migrate service
+      MOCK_DELAY: ${MOCK_DELAY:-0.4}
       ORCHESTRATOR_TOKEN: ${ORCHESTRATOR_TOKEN:-local-only-orchestrator-token}
       LLM_GATEWAY_URL: ${LLM_GATEWAY_URL:-}
       METRICS_PORT: "9464"
@@ -114,6 +115,7 @@ services:
       MOCK_MODE: ${MOCK_MODE:-true}
       FRONTEND_ORIGINS: ${FRONTEND_ORIGINS:-http://localhost:3000}
       AUTH_MODE: ${AUTH_MODE:-disabled}
+      RATE_LIMIT_ENABLED: ${RATE_LIMIT_ENABLED:-true}
       COGNITO_REGION: ${COGNITO_REGION:-}
       COGNITO_USER_POOL_ID: ${COGNITO_USER_POOL_ID:-}
       COGNITO_CLIENT_IDS: ${COGNITO_CLIENT_IDS:-}

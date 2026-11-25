@@ -141,3 +141,23 @@ def test_delete_plan_removes_state_and_ownership():
         assert tid not in [p["thread_id"] for p in c.get("/api/v1/plans").json()["items"]]
         assert asyncio.run(server.orch.runs.get(tid)) is None
         assert c.delete(f"/api/v1/plans/{tid}").status_code == 404
+
+
+def test_lost_orchestrator_stream_ends_with_error_event():
+    class Broken(httpx.AsyncByteStream):
+        async def __aiter__(self):
+            yield b"event: start\ndata: {}\n\n"
+            raise httpx.RemoteProtocolError("peer closed connection")
+
+    def handler(request):
+        return httpx.Response(200, stream=Broken(), headers={"content-type": "text/event-stream"})
+
+    async def go():
+        remote = orchestrator.RemoteOrchestrator("http://o", TOKEN, transport=httpx.MockTransport(handler))
+        stream = await remote.start("abcdefgh12", "start", {"query": "x"}, "t:u")
+        text = "".join([chunk async for chunk in stream])
+        await remote.aclose()
+        return text
+
+    text = asyncio.run(go())
+    assert text.startswith("event: start") and "event: error" in text and "stopped unexpectedly" in text

@@ -6,7 +6,10 @@ Run:
 
 import contextvars
 import json
+import logging
 import os
+import re
+import time
 import uuid
 from typing import Any, Iterator
 
@@ -18,9 +21,15 @@ from langchain_core.messages import HumanMessage
 from langgraph.types import Command
 from pydantic import BaseModel, ConfigDict, Field
 
-import keys
-import mock
-from graph import app as travel_graph
+import logging_setup
+
+logging_setup.configure("api")
+
+import keys  # noqa: E402
+import mock  # noqa: E402
+from graph import app as travel_graph  # noqa: E402
+
+log = logging.getLogger("voyagent.api")
 
 MOCK_MODE = mock.enabled()
 
@@ -66,6 +75,39 @@ api.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+
+_REQUEST_ID_RE = re.compile(r"^[A-Za-z0-9._-]{8,64}$")
+
+
+@api.middleware("http")
+async def _request_context(request: Request, call_next):
+    """Request ID (trusted from the proxy if well-formed, else generated) + one access log line.
+
+    Logs metadata only: method, route template, status, duration. Never bodies or query strings.
+    """
+    incoming = request.headers.get("x-request-id", "")
+    request_id = incoming if _REQUEST_ID_RE.match(incoming) else uuid.uuid4().hex
+    token = logging_setup.request_id_var.set(request_id)
+    start = time.perf_counter()
+    status = 500
+    try:
+        response = await call_next(request)
+        status = response.status_code
+        response.headers["X-Request-ID"] = request_id
+        return response
+    finally:
+        route = request.scope.get("route")
+        log.info(
+            "http_request",
+            extra={
+                "method": request.method,
+                "route": getattr(route, "path", request.url.path),
+                "status": status,
+                "duration_ms": round((time.perf_counter() - start) * 1000, 1),
+            },
+        )
+        logging_setup.request_id_var.reset(token)
 
 
 @api.exception_handler(RequestValidationError)
@@ -233,6 +275,7 @@ def _stream_graph(graph_input: Any, thread_id: str, api_keys: keys.ApiKeys) -> I
                 yield _sse("fallback", run.fallback)
         yield _sse("done", _snapshot(thread_id).model_dump())
     except Exception as exc:  # surface errors to the UI instead of dropping the stream
+        log.exception("graph_run_failed", extra={"thread_id": thread_id})
         yield _sse("error", {"message": keys.redact(str(exc), api_keys)})
 
 

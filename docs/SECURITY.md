@@ -6,10 +6,10 @@ Found during the Phase 1 audit. Status is updated as fixes land.
 
 | ID | Severity | Finding | Location | Status |
 |---|---|---|---|---|
-| F1 | Critical | `VERCEL_OIDC_TOKEN` committed in `.env.local` | `origin/backend` commit `3475a8d` | Excluded from monorepo. **Owner must rotate.** History rewrite needs force-push to `backend` (not authorized). |
+| F1 | Critical | `VERCEL_OIDC_TOKEN` committed in `.env.local`. **The GitHub repository is public** (README wrongly says private), so treat it as disclosed | `origin/backend` commit `3475a8d` | Excluded from monorepo. **Owner must rotate.** History rewrite needs force-push to `backend` (not authorized). |
 | F2 | High | No authentication; `user_id` client-supplied; thread IDs `{user_id}_{8 hex}` are guessable → any plan readable via `GET /api/plan/{id}` | `server.py` | Open → Phase 2 |
 | F3 | High | User-supplied provider keys sent from browser, optionally kept in `localStorage` | `apps/web/lib/keys.ts`, `ApiKeysDialog.tsx` | **Fixed** on `feature/backend-fastapi`: dialog and storage removed; stale browser keys wiped on load; API rejects `api_keys` (422, value not echoed) |
-| F4 | High | Raw LLM output, guardrail output and user content printed to stdout | `agents.py` | Open → Phase 2 |
+| F4 | High | Raw LLM output, guardrail output and user content printed to stdout | `agents.py` | **Fixed**: all `print()` removed; JSON logs carry metadata only (agent, routing, outcome), redaction filter, request IDs; test asserts no user text/model output in logs |
 | F5 | Medium | Guardrail is a single LLM prompt with user text interpolated (injectable). Fails closed on parse error | `agents.py` `supervisor_agent` | Open → Phase 6 |
 | F6 | Medium | Unbounded module-level dicts per thread (memory growth; breaks with >1 replica) | `server.py` | Open → Phase 2 |
 | F7 | Medium | Sync graph on threadpool; MCP subprocess spawned per tool call (DoS amplification) | `server.py`, `mcp_client.py` | Open → Phase 2 |

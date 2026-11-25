@@ -5,6 +5,7 @@ Each service gets its own MCP client built from the keys of the current request
 instead of contacting the real API.
 """
 
+import logging
 import os
 import sys
 from pathlib import Path
@@ -14,6 +15,8 @@ from langchain_mcp_adapters.client import MultiServerMCPClient
 import keys
 import mock
 import tool_format
+
+log = logging.getLogger("voyagent.mcp")
 
 PROJECT_DIR = Path(__file__).resolve().parent
 
@@ -69,7 +72,7 @@ async def _get_tools(service: str, key: str) -> list:
             tools = await client.get_tools()
         except Exception as e:
             # Never print raw exceptions: they can contain the key (e.g. in the Tavily URL).
-            print(f"[mcp] failed to load {service} tools: {keys.redact(repr(e))}")
+            log.error("mcp_tools_load_failed", extra={"service": service, "error_type": type(e).__name__})
             raise RuntimeError(keys.redact(f"Could not connect to the {service} MCP server: {e}")) from None
         if len(_tools_cache) >= _MAX_CACHED:
             _tools_cache.pop(next(iter(_tools_cache)))
@@ -116,7 +119,7 @@ async def _tool(key_field: str, tool_name: str, args: dict, dummy):
             return await call_tool(key_field, tool_name, args)
         except ToolFailed as e:
             msg = tool_format.fallback_message(key_field, e.status, e.detail)
-            print(f"[mcp] {key_field}.{tool_name} failed, switching to dummy data: {msg}")
+            log.warning("tool_fallback", extra={"service": key_field, "tool": tool_name, "status": e.status, "reason": msg})
             keys.trigger_fallback(_SERVICE[key_field], msg)
     keys.use_dummy()
     return await dummy()

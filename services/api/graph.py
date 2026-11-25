@@ -1,3 +1,5 @@
+import logging
+
 import psycopg
 from langgraph.checkpoint.memory import MemorySaver
 from langgraph.checkpoint.postgres import PostgresSaver
@@ -16,6 +18,8 @@ from agents import (
 )
 from config import DATABASE_URL
 from state import TravelState
+
+log = logging.getLogger("voyagent.graph")
 
 AGENT_ORDER = [
     "flight_agent",
@@ -109,10 +113,10 @@ def _build_checkpointer():
             )
             checkpointer = PostgresSaver(conn)
             checkpointer.setup()
-            print("[graph] Using PostgreSQL checkpointer")
+            log.info("checkpointer_ready", extra={"backend": "postgres"})
             return checkpointer
         except Exception as exc:
-            print(f"[graph] PostgreSQL unavailable ({type(exc).__name__}); using in-memory checkpointer")
+            log.warning("checkpointer_fallback", extra={"backend": "memory", "error_type": type(exc).__name__})
 
     return MemorySaver()
 

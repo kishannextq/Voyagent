@@ -2,7 +2,7 @@
 
 ## Local development [done]
 
-Prereqs: Docker, Node 20+, [uv](https://docs.astral.sh/uv/).
+Prereqs: Docker, Node 22 LTS, [uv](https://docs.astral.sh/uv/).
 
 ```bash
 cp .env.example .env              # MOCK_MODE=true needs no provider keys

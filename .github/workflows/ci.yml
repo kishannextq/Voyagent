@@ -148,6 +148,7 @@ jobs:
           MOCK_LLM_URL: http://127.0.0.1:9200
           GATEWAY_TEST_DB: "1"
         run: |
+          set -o pipefail
           uv run pytest -q -rs tests/test_gateway.py | tee gw.txt
           ! grep -q SKIPPED gw.txt
       - name: Gateway logs
@@ -171,6 +172,7 @@ jobs:
       - name: Evaluate (fastembed, k=3)
         env: { RAG_EMBEDDER: fastembed }
         run: |
+          set -o pipefail
           uv run python -m rag.eval 3 | tee eval.md
           echo "## Retrieval evaluation" >> "$GITHUB_STEP_SUMMARY"
           cat eval.md >> "$GITHUB_STEP_SUMMARY"
@@ -277,12 +279,14 @@ jobs:
       - name: Load test (k6)
         run: |
           chmod 777 tests/load
+          set -o pipefail
           docker run --rm --network host -v "$PWD/tests/load:/scripts" grafana/k6:2.3.0 run /scripts/plan.js | tee k6.txt
           { echo "## Load test (mock mode, MOCK_DELAY=$MOCK_DELAY)"; echo '```'; tail -12 k6.txt; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
       - name: Failure injection and backup/restore drill
         env:
           MOCK_DELAY: "0.6"  # slow enough to kill the orchestrator mid-plan
         run: |
+          set -o pipefail
           docker compose up -d orchestrator
           python3 infra/resilience/drill.py | tee drill.txt
           { echo "## Resilience drill"; echo '```'; cat drill.txt; echo '```'; } >> "$GITHUB_STEP_SUMMARY"

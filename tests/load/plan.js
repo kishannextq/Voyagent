@@ -42,7 +42,7 @@ export const options = {
     // Mock mode: ~10 model/tool calls x MOCK_DELAY plus platform overhead per plan.
     plan_duration: ["p(95)<8000"],
   },
-  summaryTrendStats: ["avg", "med", "p(90)", "p(95)", "p(99)", "max"],
+  summaryTrendStats: ["avg", "med", "p(90)", "p(95)", "p(99)", "max", "count"],
 };
 
 const json = { headers: { "Content-Type": "application/json" }, timeout: "60s" };

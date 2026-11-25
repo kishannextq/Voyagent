@@ -328,33 +328,38 @@ class RemoteOrchestrator:
     def busy(self) -> bool:
         return False  # the orchestrator answers 503 itself (see start)
 
+    async def _call(self, method: str, path: str, **kw) -> httpx.Response:
+        try:
+            return await self._client.request(method, path, headers=self._headers(), **kw)
+        except httpx.HTTPError as e:
+            raise OrchestratorError(f"orchestrator unreachable: {type(e).__name__}") from e
+
+    @staticmethod
+    def _ok(r: httpx.Response) -> httpx.Response:
+        if r.status_code >= 400:
+            raise OrchestratorError(f"orchestrator returned {r.status_code}")
+        return r
+
     async def modes(self) -> dict[str, str]:
-        r = await self._client.get("/internal/v1/modes", headers=self._headers())
-        r.raise_for_status()
-        return r.json()
+        return self._ok(await self._call("GET", "/internal/v1/modes")).json()
 
     async def exists(self, thread_id: str) -> bool:
         return await self.snapshot(thread_id) is not None
 
     async def snapshot(self, thread_id: str) -> dict | None:
-        r = await self._client.get(f"/internal/v1/threads/{thread_id}", headers=self._headers())
+        r = await self._call("GET", f"/internal/v1/threads/{thread_id}")
         if r.status_code == 404:
             return None
-        r.raise_for_status()
-        return r.json()
+        return self._ok(r).json()
 
     async def delete(self, thread_id: str) -> None:
-        r = await self._client.delete(f"/internal/v1/threads/{thread_id}", headers=self._headers())
-        r.raise_for_status()
+        self._ok(await self._call("DELETE", f"/internal/v1/threads/{thread_id}"))
 
     async def get_memory(self, end_user: str) -> dict[str, str]:
-        r = await self._client.get("/internal/v1/memory", params={"owner": end_user}, headers=self._headers())
-        r.raise_for_status()
-        return r.json()
+        return self._ok(await self._call("GET", "/internal/v1/memory", params={"owner": end_user})).json()
 
     async def delete_memory(self, end_user: str) -> None:
-        r = await self._client.delete("/internal/v1/memory", params={"owner": end_user}, headers=self._headers())
-        r.raise_for_status()
+        self._ok(await self._call("DELETE", "/internal/v1/memory", params={"owner": end_user}))
 
     async def start(
         self, thread_id: str, kind: str, payload: dict, end_user: str, tenant_id: str = ""
@@ -365,7 +370,10 @@ class RemoteOrchestrator:
             json={"kind": kind, "payload": payload, "end_user": end_user, "tenant_id": tenant_id},
             headers=self._headers(),
         )
-        resp = await self._client.send(req, stream=True)
+        try:
+            resp = await self._client.send(req, stream=True)
+        except httpx.HTTPError as e:
+            raise OrchestratorError(f"orchestrator unreachable: {type(e).__name__}") from e
         if resp.status_code == 503:
             await resp.aclose()
             raise Busy()

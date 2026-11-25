@@ -161,3 +161,19 @@ def test_lost_orchestrator_stream_ends_with_error_event():
 
     text = asyncio.run(go())
     assert text.startswith("event: start") and "event: error" in text and "stopped unexpectedly" in text
+
+
+def test_unreachable_orchestrator_gives_502_and_degraded_health(monkeypatch):
+    def refuse(request):
+        raise httpx.ConnectError("connection refused")
+
+    async def open_remote():
+        return orchestrator.RemoteOrchestrator("http://o", TOKEN, transport=httpx.MockTransport(refuse))
+
+    monkeypatch.setattr(orchestrator, "open_from_env", open_remote)
+    with TestClient(server.api) as c:
+        h = c.get("/api/v1/health")
+        assert h.status_code == 200 and h.json()["status"] == "degraded"
+        r = c.post("/api/v1/plan/stream", json=PLAN)
+        assert r.status_code == 502 and r.json() == {"detail": "Planner temporarily unavailable"}
+        assert c.get("/api/v1/me/memory").status_code == 502

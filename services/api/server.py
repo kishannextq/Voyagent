@@ -186,6 +186,14 @@ api.add_middleware(
 _REQUEST_ID_RE = re.compile(r"^[A-Za-z0-9._-]{8,64}$")
 
 
+def _route_template(path: str, route) -> str:
+    """Route template incl. its mount prefix (FastAPI keeps router routes unprefixed in scope)."""
+    if route is None:
+        return path  # unmatched (404) or CORS preflight
+    prefix = "/api/v1" if path.startswith("/api/v1/") else "/api" if path.startswith("/api/") else ""
+    return prefix + route.path
+
+
 @api.middleware("http")
 async def _request_context(request: Request, call_next):
     """Request ID (trusted from the proxy if well-formed, else generated) + one access log line.
@@ -213,7 +221,7 @@ async def _request_context(request: Request, call_next):
             "http_request",
             extra={
                 "method": request.method,
-                "route": getattr(route, "path", request.url.path),
+                "route": _route_template(request.url.path, route),
                 "status": status,
                 "duration_ms": round((time.perf_counter() - start) * 1000, 1),
             },

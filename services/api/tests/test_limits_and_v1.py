@@ -185,3 +185,13 @@ def test_image_does_not_trust_all_proxies():
     dockerfile = (pathlib.Path(server.__file__).parent / "Dockerfile").read_text(encoding="utf-8")
     assert "forwarded-allow-ips='*'" not in dockerfile
     assert "FORWARDED_ALLOW_IPS=127.0.0.1" in dockerfile
+
+
+def test_access_log_route_includes_version_prefix():
+    assert server._route_template("/api/v1/plan/abc12345", type("R", (), {"path": "/plan/{thread_id}"})) == (
+        "/api/v1/plan/{thread_id}"
+    )
+    assert server._route_template("/api/plan/abc12345", type("R", (), {"path": "/plan/{thread_id}"})) == (
+        "/api/plan/{thread_id}"
+    )
+    assert server._route_template("/nope", None) == "/nope"

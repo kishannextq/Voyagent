@@ -177,3 +177,14 @@ def test_agent_calls_carry_role_and_end_user(monkeypatch):
 
     asyncio.run(go())
     assert calls == [("fast", "acme:alice"), ("smart", "acme:alice")]
+
+
+def test_placeholder_secrets_count_as_missing(monkeypatch):
+    import keys
+
+    monkeypatch.delenv("MOCK_MODE", raising=False)
+    monkeypatch.delenv("LLM_GATEWAY_URL", raising=False)
+    for name in ("GROQ_API_KEY", "TAVILY_API_KEY", "AVIATION_STACK_API_KEY", "OPENWEATHER_API_KEY"):
+        monkeypatch.setenv(name, "SET-ME")
+    assert keys.server_keys() == keys.ApiKeys()
+    assert keys.modes(keys.resolve()) == {"llm": "mock", "flights": "mock", "hotels": "mock", "weather": "mock"}

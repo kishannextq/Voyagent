@@ -1,0 +1,10 @@
+# Copy to production.tfvars (gitignored). No secrets belong here: secrets live in Secrets Manager.
+environment           = "production"
+region                = "eu-west-1"
+azs                   = ["eu-west-1a", "eu-west-1b", "eu-west-1c"]
+image_tag             = "REPLACE_WITH_GIT_SHA"
+certificate_arn       = "arn:aws:acm:eu-west-1:111111111111:certificate/REPLACE"
+app_hostname          = "production.voyagent.example.com"
+cognito_domain_prefix = "voyagent-production-example"
+github_repository     = "kishannextq/Voyagent"
+production_sizing     = true

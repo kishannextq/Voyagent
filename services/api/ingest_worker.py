@@ -14,6 +14,7 @@ import logging_setup
 
 logging_setup.configure("ingest-worker")
 
+import config  # noqa: E402,F401 - builds DATABASE_URL from DB_* parts when needed
 import metrics  # noqa: E402
 import redis_conn  # noqa: E402
 import telemetry  # noqa: E402

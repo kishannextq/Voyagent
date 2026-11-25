@@ -29,3 +29,5 @@ crash.log
 .idea/
 .DS_Store
 Thumbs.db
+*.backend.hcl
+!*.backend.hcl.example

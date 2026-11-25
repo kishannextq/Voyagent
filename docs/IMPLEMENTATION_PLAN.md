@@ -70,8 +70,9 @@ Updated continuously. `[x]` = implemented and verified (how is noted); `[ ]` = n
 - [ ] Browser and gateway spans; Langfuse (needs a data-retention decision); token/cost metrics; alert routing
 
 ## Phase 8 — Infrastructure & delivery  (`feature/terraform-infrastructure`, `feature/cicd-deployment`)
-- [ ] Terraform modules; `validate`/`plan` for staging (no apply without authorization)
-- [ ] ECR/ECS deploy pipeline with health-gated rollout and rollback
+- [x] Terraform modules (network, secrets/KMS, data: RDS pgvector + Valkey, Cognito, ALB + WAF, ECS services, GitHub OIDC) with staging/production via tfvars — `terraform validate` + checkov (359 passed, 0 failed, 17 justified skips) in CI. **Never applied; `plan` not run (no AWS account)**
+- [x] Deploy pipeline: manual workflow per protected environment (OIDC, no stored keys), build → Trivy → push immutable SHA tags → migrate task → rolling ECS deploy with circuit breaker → smoke test → automatic rollback (`infra/deploy/deploy.sh`) — shellcheck + actionlint in CI. **Not executed**
+- [ ] Known infra gaps: tenant-claim Lambda, app DB role, secret rotation, CloudFront, S3/SQS for documents, upload scanner, alert routing (`infra/terraform/README.md`)
 
 ## Phase 9 — Integration & readiness  (`feature/integration-testing`, `release/v1`)
 - [ ] Playwright E2E, accessibility checks

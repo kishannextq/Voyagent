@@ -97,3 +97,22 @@ def test_postgres_state_survives_new_instance_and_concurrency(monkeypatch):
             await close_b()
 
     _run(scenario())
+
+
+def test_database_url_built_from_parts(monkeypatch):
+    import importlib
+
+    import config
+
+    monkeypatch.delenv("DATABASE_URL", raising=False)
+    monkeypatch.setenv("DB_HOST", "db.internal")
+    monkeypatch.setenv("DB_USER", "voyagent_admin")
+    monkeypatch.setenv("DB_PASSWORD", "p@ss/w:rd")
+    try:
+        url = importlib.reload(config).DATABASE_URL
+        assert url == "postgresql://voyagent_admin:p%40ss%2Fw%3Ard@db.internal:5432/voyagent?sslmode=require"
+        assert os.environ["DATABASE_URL"] == url
+    finally:
+        monkeypatch.delenv("DB_HOST")
+        os.environ.pop("DATABASE_URL", None)
+        importlib.reload(config)

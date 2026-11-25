@@ -13,6 +13,8 @@ import sys
 from alembic import command
 from alembic.config import Config
 
+import config  # noqa: F401 - builds DATABASE_URL from DB_* parts when needed
+
 HERE = pathlib.Path(__file__).resolve().parent
 
 

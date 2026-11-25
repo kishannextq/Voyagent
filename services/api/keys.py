@@ -39,16 +39,25 @@ SERVICE_KEYS = {
 _current: ContextVar[ApiKeys] = ContextVar("api_keys", default=ApiKeys())  # noqa: B039 - frozen dataclass, immutable
 
 
+# Unset secrets in Secrets Manager hold this placeholder (infra/terraform/modules/secrets).
+_PLACEHOLDERS = {"", "SET-ME"}
+
+
+def _env_key(name: str) -> str:
+    value = os.getenv(name, "").strip()
+    return "" if value in _PLACEHOLDERS else value
+
+
 def server_keys() -> ApiKeys:
     """Keys configured on the server. Ignored while MOCK_MODE is on."""
     if _mock_mode():
         return ApiKeys()
     return ApiKeys(
         # LLM credential: the gateway's virtual key when the gateway is configured, else Groq.
-        groq=(os.getenv("LLM_GATEWAY_KEY", "") if os.getenv("LLM_GATEWAY_URL", "").strip() else os.getenv("GROQ_API_KEY", "")).strip(),
-        tavily=os.getenv("TAVILY_API_KEY", "").strip(),
-        aviationstack=os.getenv("AVIATION_STACK_API_KEY", "").strip(),
-        openweather=os.getenv("OPENWEATHER_API_KEY", "").strip(),
+        groq=_env_key("LLM_GATEWAY_KEY") if os.getenv("LLM_GATEWAY_URL", "").strip() else _env_key("GROQ_API_KEY"),
+        tavily=_env_key("TAVILY_API_KEY"),
+        aviationstack=_env_key("AVIATION_STACK_API_KEY"),
+        openweather=_env_key("OPENWEATHER_API_KEY"),
     )
 
 

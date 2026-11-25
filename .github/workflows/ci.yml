@@ -44,6 +44,15 @@ jobs:
         run: npx tsc --noEmit
       - name: Build
         run: npm run build
+
+  # Separate job so a failing audit is visible without blocking image builds/scans.
+  web-audit:
+    needs: changes
+    if: needs.changes.outputs.web == 'true'
+    runs-on: ubuntu-latest
+    defaults: { run: { working-directory: apps/web } }
+    steps:
+      - uses: actions/checkout@v4
       - name: Dependency audit (high+)
         run: npm audit --omit=dev --audit-level=high
 

@@ -59,8 +59,10 @@ Updated continuously. `[x]` = implemented and verified (how is noted); `[ ]` = n
 - [ ] Model-graded faithfulness judge; larger, harder golden set (current one saturates)
 
 ## Phase 6 — Guardrails  (`feature/guardrails`)
-- [ ] Input/output rails library; Bedrock Guardrails; dialogue rails config
-- [ ] Jailbreak/prompt-injection regression suite in CI
+- [x] Rails library + policy file (`guardrails/policy.yaml`, validated at startup): input rails before any model call (injection/jailbreak/prompt-leak/exfiltration/code-exec/role-tag/delimiter patterns on normalised text incl. FR/ES/PT/IT/DE; PII redaction email/card(Luhn)/IBAN/passport/phone); output rails on every model reply (system-prompt canary → withheld, PII, unsafe link schemes, length); tool outputs delimited as data
+- [x] Jailbreak/prompt-injection regression suite in CI: 40 known attacks blocked, 0/30 benign false positives (tuned set); held-out set 2/15 blocked, 0/15 false positives (generalisation floor)
+- [ ] Model-based injection classifier (e.g. Bedrock Guardrails prompt-attack filter via the gateway, config stubbed) — the deterministic rails generalise poorly (held-out 13%)
+- [ ] Bedrock Guardrails enabled (needs AWS)
 
 ## Phase 7 — Observability  (`feature/observability`)
 - [ ] OTel traces/metrics/logs across web → api → orchestrator → gateway

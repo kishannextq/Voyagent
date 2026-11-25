@@ -32,6 +32,21 @@ model_list:
   #     model: bedrock/anthropic.claude-sonnet-4-5-20250929-v1:0
   #     aws_region_name: os.environ/AWS_REGION
 
+# Amazon Bedrock Guardrails as a second content layer on every model call (needs AWS; not enabled).
+# guardrails:
+#   - guardrail_name: bedrock-input
+#     litellm_params:
+#       guardrail: bedrock
+#       mode: pre_call
+#       guardrailIdentifier: os.environ/BEDROCK_GUARDRAIL_ID
+#       guardrailVersion: os.environ/BEDROCK_GUARDRAIL_VERSION
+#   - guardrail_name: bedrock-output
+#     litellm_params:
+#       guardrail: bedrock
+#       mode: post_call
+#       guardrailIdentifier: os.environ/BEDROCK_GUARDRAIL_ID
+#       guardrailVersion: os.environ/BEDROCK_GUARDRAIL_VERSION
+
 router_settings:
   # Failover order per alias. Retries happen here only (the API client does not retry).
   fallbacks:

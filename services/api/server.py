@@ -25,6 +25,7 @@ import logging_setup
 logging_setup.configure("api")
 
 import auth  # noqa: E402
+import guardrails  # noqa: E402
 import memory  # noqa: E402
 import mock  # noqa: E402
 import orchestrator  # noqa: E402
@@ -376,8 +377,20 @@ async def limit_runs(request: Request) -> None:
     await _enforce(request, "run", limits.runs_per_minute)
 
 
+def _screen(text: str) -> str:
+    """Input rails (guardrails/policy.yaml): 400 on injection/jailbreak patterns; PII redacted."""
+    verdict = guardrails.check_input(text)
+    if not verdict.allowed:
+        raise HTTPException(status_code=400, detail="Request blocked by content policy")
+    return verdict.text
+
+
 def _start_payload(req: "PlanRequest", principal: auth.Principal) -> dict:
-    return {"query": req.query, "user_id": principal.sub}
+    return {"query": _screen(req.query), "user_id": principal.sub}
+
+
+def _resume_payload(body: "ApprovalRequest") -> dict:
+    return {"approved": body.approved, "feedback": _screen(body.feedback) if body.feedback else ""}
 
 
 async def current_principal(request: Request) -> auth.Principal:
@@ -450,16 +463,18 @@ async def list_plans(
 @router.post("/plan", response_model=PlanResponse, dependencies=_RUN)
 async def create_plan(req: PlanRequest, principal: Caller):
     """Run the agents until the human-approval checkpoint (waits for the result)."""
+    payload = _start_payload(req, principal)
     thread_id = await _new_thread_id(req, principal)
-    return await _run_blocking(thread_id, "start", _start_payload(req, principal), principal)
+    return await _run_blocking(thread_id, "start", payload, principal)
 
 
 @router.post("/plan/stream", dependencies=_RUN)
 async def create_plan_stream(req: PlanRequest, principal: Caller):
     """Same as POST /plan but streams agent progress as Server-Sent Events."""
+    payload = _start_payload(req, principal)
     thread_id = await _new_thread_id(req, principal)
     return StreamingResponse(
-        await _start(thread_id, "start", _start_payload(req, principal), principal),
+        await _start(thread_id, "start", payload, principal),
         media_type="text/event-stream",
         headers=_SSE_HEADERS,
     )
@@ -482,7 +497,7 @@ async def approve_plan(thread_id: str, body: ApprovalRequest, principal: Caller)
     current = await _snapshot(thread_id)
     if current.status != "awaiting_approval":
         raise HTTPException(status_code=409, detail="Thread is not awaiting approval")
-    return await _run_blocking(thread_id, "resume", body.resume_value(), principal)
+    return await _run_blocking(thread_id, "resume", _resume_payload(body), principal)
 
 
 @router.post("/plan/{thread_id}/approve/stream", dependencies=_RUN)
@@ -492,7 +507,7 @@ async def approve_plan_stream(thread_id: str, body: ApprovalRequest, principal: 
     if current.status != "awaiting_approval":
         raise HTTPException(status_code=409, detail="Thread is not awaiting approval")
     return StreamingResponse(
-        await _start(thread_id, "resume", body.resume_value(), principal),
+        await _start(thread_id, "resume", _resume_payload(body), principal),
         media_type="text/event-stream",
         headers=_SSE_HEADERS,
     )

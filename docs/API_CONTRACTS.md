@@ -26,6 +26,11 @@ unversioned `/api/...` paths for older web builds; those responses carry `Deprec
 | DELETE | `/api/v1/plans/{thread_id}` | — | 204; deletes checkpoints, run metadata, ownership · 404 if not yours | requests |
 | GET | `/api/v1/me/memory` | — | `{enabled, preferences:{home_city?,travel_style?,budget_level?,last_destination?}, retention_days}` | requests |
 | DELETE | `/api/v1/me/memory` | — | 204; forgets all preferences | requests |
+| POST | `/api/v1/documents` | multipart `file` (PDF/MD/text ≤5 MiB), `title` | 202 `DocumentView` (`pending`; duplicate bytes return the existing document) · 403 non-admin · 422 rejected (reason given) | requests + runs |
+| GET | `/api/v1/documents` | — | tenant's documents with `status`/`version`/`scan` | requests |
+| GET | `/api/v1/documents/{id}` | — | `DocumentView` · 404 | requests |
+| GET | `/api/v1/documents/search?q=&k=4` | — | `[{label, document_id, title, text}]` (what agents would retrieve) | requests |
+| DELETE | `/api/v1/documents/{id}` | — | 204 · 403 non-admin · 404 | requests |
 | POST | `/api/v1/plan/{thread_id}/approve` | `ApprovalRequest` | `PlanResponse` · 409 if not awaiting approval | requests + runs |
 | POST | `/api/v1/plan/{thread_id}/approve/stream` | `ApprovalRequest` | `text/event-stream` · 409 | requests + runs |
 

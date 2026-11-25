@@ -74,12 +74,28 @@ services:
       CHECKPOINTER_SETUP: "false"  # done by the migrate service
       ORCHESTRATOR_TOKEN: ${ORCHESTRATOR_TOKEN:-local-only-orchestrator-token}
       LLM_GATEWAY_URL: ${LLM_GATEWAY_URL:-}
+      RAG_EMBEDDER: ${RAG_EMBEDDER:-hash}
       LLM_GATEWAY_KEY: ${LLM_GATEWAY_KEY:-}
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8001/internal/v1/health', timeout=2)"]
       interval: 15s
       timeout: 3s
       retries: 3
+    depends_on:
+      migrate: { condition: service_completed_successfully }
+      redis: { condition: service_healthy }
+
+  # Processes uploaded documents (extract, chunk, embed) from the Redis queue.
+  ingest-worker:
+    build: ./services/api
+    command: ["python", "ingest_worker.py"]
+    environment:
+      DATABASE_URL: postgresql://${POSTGRES_USER:-voyagent}:${POSTGRES_PASSWORD:-voyagent_local_only}@postgres:5432/${POSTGRES_DB:-voyagent}
+      REDIS_URL: redis://redis:6379/0
+      APP_ENV: ${APP_ENV:-local}
+      RAG_EMBEDDER: ${RAG_EMBEDDER:-hash}
+      LLM_GATEWAY_URL: ${LLM_GATEWAY_URL:-}
+      LLM_GATEWAY_KEY: ${LLM_GATEWAY_KEY:-}
     depends_on:
       migrate: { condition: service_completed_successfully }
       redis: { condition: service_healthy }
@@ -98,6 +114,7 @@ services:
       COGNITO_USER_POOL_ID: ${COGNITO_USER_POOL_ID:-}
       COGNITO_CLIENT_IDS: ${COGNITO_CLIENT_IDS:-}
       ORCHESTRATOR_URL: http://orchestrator:8001
+      RAG_EMBEDDER: ${RAG_EMBEDDER:-hash}
       ORCHESTRATOR_TOKEN: ${ORCHESTRATOR_TOKEN:-local-only-orchestrator-token}
     ports: ["127.0.0.1:8000:8000"]
     depends_on:

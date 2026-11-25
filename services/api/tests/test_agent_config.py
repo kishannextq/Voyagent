@@ -29,7 +29,8 @@ def test_tool_allow_lists_are_least_privilege():
     assert tools["flight_agent"] == {"aviationstack.list_airports", "aviationstack.list_airlines"}
     assert tools["hotel_agent"] == {"tavily.tavily_search"}
     assert tools["weather_agent"] == {"openweather.get_current_weather", "openweather.get_forecast"}
-    for writer in ("supervisor", "budget_agent", "itinerary_agent", "final_response", "human_approval"):
+    assert tools["budget_agent"] == tools["itinerary_agent"] == {"rag.search"}  # organisation documents only
+    for writer in ("supervisor", "final_response", "human_approval"):
         assert tools[writer] == set(), writer
 
 

@@ -9,8 +9,8 @@ scaling, deploy cadence, or a security boundary (ARCHITECTURE.md D2/D3).
 | `api` | **done** (`services/api`, `server.py`) | BFF: authn/z, tenancy, validation, rate limits, SSE relay | `app.threads` (ownership) | orchestrator, rag |
 | `orchestrator` | **done** (`orchestrator_app.py`, same image as api) | LangGraph agents, tool execution, memory, HITL | checkpoints (library tables), `app.user_memory` | model-gateway, rag, tools |
 | `model-gateway` | **done** (`services/model-gateway`) | LiteLLM proxy: routing, fallback, keys, cache, spend | own database `litellm`: keys, budgets, spend logs | Groq (Bedrock configured, not enabled) |
-| `rag` | planned | Retrieval, reranking, compression, citations | `rag` schema: documents, chunks, embeddings | model-gateway (embeddings/rerank) |
-| `ingest-worker` | planned | Async document pipeline from SQS | writes `rag` schema via rag-owned contract*, S3 objects | S3, model-gateway |
+| `rag` | **done as a library** (`services/api/rag/`, used by api + orchestrator) | Retrieval, reranking, citations | `rag` schema: documents, parents, chunks | model-gateway (embeddings) |
+| `ingest-worker` | **done** (`ingest_worker.py`, same image) | Async document pipeline from a Redis queue (SQS planned) | writes `rag` schema | model-gateway |
 
 \* `ingest-worker` and `rag` are one bounded context (same schema owner, deployed separately
 because their scaling profiles differ: bursty batch vs latency-sensitive reads).

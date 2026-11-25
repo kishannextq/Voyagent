@@ -10,6 +10,7 @@ import keys
 import mock
 from config import get_llm
 from mcp_client import current_weather, forecast, list_airlines, list_airports, tavily_search
+from rag.tool import search_documents
 from state import TravelState
 from tool_format import fallback_message, is_warning
 
@@ -255,10 +256,14 @@ async def weather_agent(state: TravelState):
 
 
 async def budget_agent(state: TravelState):
-
+    constraints = state.get("trip_constraints", {}) or {}
+    policy = await search_documents(
+        f"travel policy budget expense limits hotel flight class per diem {constraints.get('destination', '')}"
+    )
 
     prompt = f"""
 Analyze whether this trip plan is realistic for the user's budget.
+{policy}
 
 User request:
 {state['user_query']}
@@ -296,10 +301,12 @@ Return a concise budget assessment with:
 
 
 async def itinerary_agent(state: TravelState):
-
+    constraints = state.get("trip_constraints", {}) or {}
+    guides = await search_documents(f"{constraints.get('destination', '')} guide things to do neighbourhoods tips")
 
     prompt = f"""
 Create a clear draft travel itinerary.
+{guides}
 
 User request:
 {state['user_query']}

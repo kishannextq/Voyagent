@@ -61,9 +61,14 @@ LangGraph `checkpoints`, `checkpoint_writes`, `checkpoint_blobs` (library-manage
 
 ### `rag`
 ```sql
-documents(id, tenant_id, s3_key, sha256, version, mime, status, error, created_at)  -- unique(tenant_id, sha256)
-chunks(id, document_id, tenant_id, parent_id, ordinal, text, tsv tsvector, metadata jsonb)
-embeddings(chunk_id, model, dim, embedding vector)  -- HNSW index per model; gin(tsv) for hybrid
+-- 0003 [done]
+rag.documents(id uuid, tenant_id, title, mime, sha256, version, status, scan, error, chunk_count,
+              content bytea /* <= 5 MiB until S3 */, created_at, updated_at)
+              unique (tenant_id, sha256), unique (tenant_id, title, version)
+rag.parents(id, document_id fk cascade, tenant_id, ord, content)
+rag.chunks(id, parent_id fk cascade, document_id fk cascade, tenant_id, content,
+           embedding vector(RAG_EMBED_DIM=384), embedding_model, tsv tsvector generated)
+  hnsw (embedding vector_cosine_ops), gin (tsv), (tenant_id, embedding_model)
 ```
 
 ### `litellm`

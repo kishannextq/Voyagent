@@ -16,7 +16,7 @@ Next.js (App Router) + Tailwind CSS UI for the multi-agent travel planner. It ta
 
 ## Run
 
-Requires Node.js 18.17 or newer (Next.js 14).
+Requires Node.js 20.9 or newer; 22 LTS recommended (Next.js 15, React 19).
 
 ```bash
 cd frontend
@@ -51,7 +51,7 @@ This guide takes you from a fresh clone to a working deployment: the **FastAPI b
 |---|---|
 | `main` | Project landing page (this README) |
 | `backend` | FastAPI + LangGraph multi-agent API (`server.py`, `agents.py`, `graph.py`, `mock.py`, `render.yaml`) |
-| `frontend` | Next.js 14 + Tailwind UI (`app/`, `components/`, `lib/api.ts`, `vercel.json`) |
+| `frontend` | Next.js 14 + Tailwind UI (legacy branch; `apps/web` is now on Next.js 15) (`app/`, `components/`, `lib/api.ts`, `vercel.json`) |
 
 ```
 Browser ──► Vercel (Next.js UI) ──HTTPS + Server-Sent Events──► Render (FastAPI)
@@ -70,7 +70,7 @@ Browser ──► Vercel (Next.js UI) ──HTTPS + Server-Sent Events──► 
 | Git | any recent | `git --version` |
 | Python | **3.13+** (required by `aviationstack-mcp`) | `python --version` |
 | [uv](https://docs.astral.sh/uv/) (recommended) | any recent | `uv --version` |
-| Node.js | **18.17+** (20 or 24 LTS recommended) | `node -v` |
+| Node.js | **20.9+** (22 LTS recommended) | `node -v` |
 
 **Accounts** (all have free tiers): [GitHub](https://github.com), [Render](https://render.com), [Vercel](https://vercel.com).
 
@@ -293,5 +293,5 @@ The AviationStack and Weather MCP servers run inside the backend service (instal
 | Vercel: *No Output Directory named "public"* | The framework preset isn't Next.js, or Vercel is building `main`. Keep `vercel.json`, and set Production Branch to `frontend`. |
 | Plan fails with `401 Invalid API Key` | A key is wrong or missing. Fix it on Render, or set `MOCK_MODE=true`. |
 | Plans disappear after a while | Free instances sleep and memory is cleared. Add `DATABASE_URL`. |
-| `npm run dev` fails locally | Node is older than 18.17. Upgrade Node. |
+| `npm run dev` fails locally | Node is older than 20.9. Upgrade Node. |
 | Buttons do nothing / page never becomes interactive | You're running an old Next.js build. Pull the latest `frontend` branch (Next 14) and reinstall. |

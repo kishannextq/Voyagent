@@ -76,7 +76,7 @@ Updated continuously. `[x]` = implemented and verified (how is noted); `[ ]` = n
 
 ## Phase 9 — Integration & readiness  (`feature/integration-testing`, `release/v1`)
 - [x] Playwright E2E (plan/approve, revise, injection refused, off-topic, PKCE sign-in, 401) + axe WCAG 2.1 AA audits (0 violations after fixing contrast, focusable region, labels) — CI `e2e` job
-- [x] k6 load test in mock mode: plan p95 1.16 s at 25 concurrent users, 0 errors, read p95 6.9 ms (`docs/PRODUCTION_READINESS.md`); live-model capacity still to measure in staging
+- [x] k6 load test in mock mode: plan p95 1.16–1.30 s at 25 concurrent users, 0 errors, read p95 5–7 ms (`docs/PRODUCTION_READINESS.md`); live-model capacity still to measure in staging
 - [x] Failure injection (orchestrator crash, Redis down, Postgres restart) and backup/restore drill with a paused plan resumed from the restore — CI `resilience` job; found and fixed 4 resilience bugs
 - [x] Production-readiness review: `docs/PRODUCTION_READINESS.md` — **verdict: not production-ready** until the listed blockers (AWS environment, live-model run, token rotation, legacy site upgrade, model-based injection classifier, upload scanner) are closed
 

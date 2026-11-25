@@ -41,9 +41,9 @@ Reads at a constant 50 rps for 1 min, plus 1→25 concurrent users doing plan + 
 
 | Metric | Result |
 |---|---|
-| Plan (to review) p50 / p95 / max | 920 ms / 1.16 s / 1.32 s |
-| Approve p95 | 506 ms |
-| Read (health, list plans) p95 | 6.9 ms |
+| Plan (to review) p50 / p95 / max | 920 ms / 1.16–1.30 s / 1.3–2.1 s (two runs) |
+| Approve p95 | 506–721 ms |
+| Read (health, list plans) p95 | 5–7 ms |
 | Plan error rate | 0 % |
 | Total throughput | ~96 requests/s |
 
@@ -57,7 +57,7 @@ staging with live models before setting autoscaling targets and SLOs.
 
 | Failure injected | Expected | Result |
 |---|---|---|
-| Orchestrator killed mid-plan | Client stream ends promptly with an error event; API stays healthy (degraded); new plans 502; after restart, earlier plans are served and can be approved | Pass after fixes (health returned 500 and new plans 500 before; both fixed) |
+| Orchestrator killed mid-plan | Client stream ends promptly with an error event; API stays healthy (degraded); new plans 502; after restart, earlier plans are served and can be approved | Pass (13/13 drill checks) after fixes: health returned 500 and new plans 500 before; a cut stream had no error event |
 | Redis stopped | Plans still complete; health OK | Pass (after making run metadata fail-soft) |
 | Postgres restarted | No failed requests after recovery | Pass, 0/5 failed (pooled connections validated on checkout) |
 | Backup → restore | pg_dump/pg_restore into a fresh DB; ownership rows intact; a paused plan resumes to completion on the restored copy | Pass |

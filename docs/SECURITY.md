@@ -15,7 +15,7 @@ Found during the Phase 1 audit. Status is updated as fixes land.
 | F7 | Medium | Sync graph on threadpool; MCP subprocess spawned per tool call (DoS amplification) | `server.py`, `mcp_client.py` | Open → Phase 2 |
 | F8 | Medium | CORS `allow_credentials=True` with `*` methods/headers | `server.py` | Open → Phase 2 |
 | F9 | Low | 110 pinned deps incl. unused Streamlit/pandas/GitPython | `requirements.txt` | **Fixed** (13 direct deps, `uv.lock`) |
-| F10 | Medium | Single psycopg connection shared across threads; silent fallback to in-memory if DB down | `graph.py` | Open → Phase 2 |
+| F10 | Medium | Single psycopg connection shared across threads; silent fallback to in-memory if DB down | `graph.py` | **Fixed**: `psycopg_pool` pool; a configured but unreachable DB fails startup; memory only when `DATABASE_URL` unset in local/test. Postgres integration test runs in CI |
 | F11 | Medium | stdio MCP servers inherit the full process environment (all secrets) | `mcp_client.py` `_server_env` | Open → Phase 2 |
 | F12 | Low | Tavily key passed in URL query string (may be logged by proxies) | `mcp_client.py` | Open → Phase 2 |
 | F13 | Low | Outbound HTTP calls without timeout | `weather_mcp_server.py` | **Fixed** |

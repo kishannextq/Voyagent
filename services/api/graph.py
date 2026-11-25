@@ -1,11 +1,13 @@
 import logging
+import os
 
-import psycopg
 from langgraph.checkpoint.memory import MemorySaver
 from langgraph.checkpoint.postgres import PostgresSaver
 from langgraph.graph import END, START, StateGraph
 from psycopg.rows import dict_row
+from psycopg_pool import ConnectionPool
 
+import settings
 from agents import (
     budget_agent,
     final_response_agent,
@@ -53,13 +55,12 @@ def route_from_supervisor(state: TravelState) -> str:
     return selected[0] if selected else "itinerary_agent"
 
 
-
 def route_after_agent(current_agent: str):
     def route(state: TravelState) -> str:
         selected = _selected_agents(state)
         current_index = AGENT_ORDER.index(current_agent)
 
-        for next_agent in AGENT_ORDER[current_index + 1:]:
+        for next_agent in AGENT_ORDER[current_index + 1 :]:
             if next_agent in selected:
                 return next_agent
 
@@ -68,9 +69,7 @@ def route_after_agent(current_agent: str):
     return route
 
 
-
-
-def build_graph():
+def build_graph(checkpointer):
     graph = StateGraph(TravelState)
 
     graph.add_node("supervisor", supervisor_agent)
@@ -92,35 +91,44 @@ def build_graph():
     graph.add_edge("human_approval", "final_response")
     graph.add_edge("final_response", END)
 
-    return graph.compile(checkpointer=_build_checkpointer())
+    return graph.compile(checkpointer=checkpointer)
 
 
-def _build_checkpointer():
-    """Postgres checkpointer when DATABASE_URL is reachable, otherwise in-memory.
+def build_checkpointer(database_url: str | None):
+    """Checkpointer for LangGraph state (interrupt() needs one either way).
 
-    interrupt() (human approval) requires a checkpointer either way.
+    - DATABASE_URL set: pooled PostgresSaver. If the database is unreachable this raises:
+      a configured database is never silently replaced by memory (SECURITY.md F10).
+    - DATABASE_URL unset: in-memory, allowed only in local/test (APP_ENV).
     """
-    if DATABASE_URL:
-        try:
-            # Settings required by PostgresSaver (setup() runs CREATE INDEX CONCURRENTLY
-            # and the saver reads rows as dicts).
-            conn = psycopg.connect(
-                DATABASE_URL,
-                autocommit=True,
-                prepare_threshold=0,
-                row_factory=dict_row,
-                connect_timeout=5,
-            )
-            checkpointer = PostgresSaver(conn)
-            checkpointer.setup()
-            log.info("checkpointer_ready", extra={"backend": "postgres"})
-            return checkpointer
-        except Exception as exc:
-            log.warning("checkpointer_fallback", extra={"backend": "memory", "error_type": type(exc).__name__})
-
+    if database_url:
+        pool = ConnectionPool(
+            database_url,
+            min_size=int(os.getenv("PG_POOL_MIN", "1")),
+            max_size=int(os.getenv("PG_POOL_MAX", "10")),
+            timeout=float(os.getenv("PG_POOL_TIMEOUT", "10")),
+            # Required by PostgresSaver: autocommit (setup() runs CREATE INDEX CONCURRENTLY),
+            # no server-side prepared statements (poolers), rows as dicts.
+            kwargs={"autocommit": True, "prepare_threshold": 0, "row_factory": dict_row, "connect_timeout": 5},
+            open=False,
+            name="checkpointer",
+        )
+        pool.open(wait=True, timeout=float(os.getenv("PG_POOL_TIMEOUT", "10")))
+        saver = PostgresSaver(pool)
+        # Library-managed tables. In deployed envs run this once as a migration task and set
+        # CHECKPOINTER_SETUP=false on the service (docs/DATABASE_DESIGN.md).
+        if os.getenv("CHECKPOINTER_SETUP", "true").lower() in {"1", "true", "yes"}:
+            saver.setup()
+        log.info("checkpointer_ready", extra={"backend": "postgres", "pool_max": pool.max_size})
+        return saver
+    if settings.durable_required():
+        raise RuntimeError(f"DATABASE_URL is required when APP_ENV={settings.app_env()}")
+    log.warning("checkpointer_ready", extra={"backend": "memory", "note": "local/test only"})
     return MemorySaver()
 
 
-app = build_graph()
+def build_graph_with_checkpointer():
+    return build_graph(build_checkpointer(DATABASE_URL))
 
 
+app = build_graph_with_checkpointer()

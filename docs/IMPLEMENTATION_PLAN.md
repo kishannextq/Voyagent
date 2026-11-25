@@ -20,7 +20,7 @@ Updated continuously. `[x]` = implemented and verified (how is noted); `[ ]` = n
 - [x] Structured JSON logging with redaction + request IDs; all `print()` removed (F4) — 9 logging tests
 - [x] Run metadata in Redis with TTL; bounded in-memory fallback local/test only; `APP_ENV` policy (F6)
 - [x] 128-bit server thread IDs without user ID; client IDs validated, 409 on existing thread (F2, partial)
-- [ ] Pooled Postgres checkpointer; fail fast in non-local envs instead of silent in-memory fallback (F10)
+- [x] Pooled Postgres checkpointer; unreachable DB fails startup; memory only for unset URL in local/test (F10) — integration test runs in CI only (not yet executed: no push access, no local Docker)
 - [ ] Async graph execution; reuse MCP sessions instead of spawning per call (F7)
 - [ ] MCP subprocess gets a minimal env, not the full process env (F11); Tavily key out of URL (F12)
 - [ ] `/api/v1` versioned routes; old routes kept until web migrates

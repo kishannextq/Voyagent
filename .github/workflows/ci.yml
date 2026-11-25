@@ -135,7 +135,7 @@ jobs:
             -e MOCK_LLM_BASE=http://127.0.0.1:9200/v1 \
             -v "$PWD/services/model-gateway/config.test.yaml:/app/config.yaml:ro" \
             "$IMAGE" --config /app/config.yaml --port 4000
-          for i in $(seq 1 90); do
+          for _ in $(seq 1 90); do
             curl -sf http://127.0.0.1:4000/health/readiness > /dev/null && exit 0
             sleep 2
           done
@@ -258,7 +258,7 @@ jobs:
             # public api (in-process orchestrator) and the internal orchestrator command
             docker run -d --name svc -p 8000:8000 -e MOCK_MODE=true voyagent-api:ci
             docker run -d --name orch -p 8001:8001 -e MOCK_MODE=true voyagent-api:ci               sh -c "exec uvicorn orchestrator_app:app --host 0.0.0.0 --port 8001"
-            for i in $(seq 1 30); do
+            for _ in $(seq 1 30); do
               curl -sf http://127.0.0.1:8000/api/v1/health > /dev/null && curl -sf http://127.0.0.1:8001/internal/v1/health > /dev/null && break
               sleep 2
             done
@@ -269,7 +269,7 @@ jobs:
             docker run --rm voyagent-api:ci python -c "import agent_config, rag.retrieval, migrate, maintenance, ingest_worker; print('imports ok')"
           else
             docker run -d --name svc -p 3000:3000 voyagent-web:ci
-            for i in $(seq 1 30); do curl -sf http://127.0.0.1:3000/ > /dev/null && break; sleep 2; done
+            for _ in $(seq 1 30); do curl -sf http://127.0.0.1:3000/ > /dev/null && break; sleep 2; done
             curl -sf http://127.0.0.1:3000/ | grep -q Voyagent
           fi
       - name: Container logs

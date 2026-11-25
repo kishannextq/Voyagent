@@ -15,7 +15,7 @@ from collections.abc import AsyncIterator
 from contextlib import aclosing, asynccontextmanager
 from typing import Any
 
-from fastapi import FastAPI, HTTPException, Request
+from fastapi import APIRouter, Depends, FastAPI, HTTPException, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, StreamingResponse
@@ -31,6 +31,8 @@ import graph  # noqa: E402
 import keys  # noqa: E402
 import mcp_client  # noqa: E402
 import mock  # noqa: E402
+import rate_limit  # noqa: E402
+import redis_conn  # noqa: E402
 import run_store  # noqa: E402
 
 log = logging.getLogger("voyagent.api")
@@ -63,26 +65,33 @@ RUN_TIMEOUT_SECONDS = float(os.getenv("RUN_TIMEOUT_SECONDS", "300"))
 # Created in the lifespan, inside the server's event loop (async pools are loop-bound).
 travel_graph: Any = None
 runs: run_store.RunStore = None  # type: ignore[assignment]
+limiter: rate_limit.Limiter = None  # type: ignore[assignment]
+limits = rate_limit.Limits.from_env()
 _run_slots: asyncio.Semaphore | None = None
 
 
 @asynccontextmanager
 async def lifespan(_: FastAPI):
     """Open stores at startup (fail fast on misconfiguration) and close them on shutdown."""
-    global travel_graph, runs, _run_slots
+    global travel_graph, runs, limiter, limits, _run_slots
     _run_slots = asyncio.Semaphore(MAX_CONCURRENT_RUNS)
-    runs = await run_store.build()
+    limits = rate_limit.Limits.from_env()
+    redis = await redis_conn.connect()
     try:
+        runs = run_store.build(redis)
+        limiter = rate_limit.build(redis)
         travel_graph, close_graph = await graph.open_graph()
     except BaseException:
-        await runs.aclose()
+        if redis is not None:
+            await redis.aclose()
         raise
     try:
         yield
     finally:
         await mcp_client.aclose_sessions()
         await close_graph()
-        await runs.aclose()
+        if redis is not None:
+            await redis.aclose()
 
 
 api = FastAPI(
@@ -91,6 +100,68 @@ api = FastAPI(
     description="LangGraph supervisor + specialist agents with human-in-the-loop approval.",
     lifespan=lifespan,
 )
+
+MAX_BODY_BYTES = int(os.getenv("MAX_BODY_BYTES", str(64 * 1024)))
+
+
+class BodySizeLimit:
+    """Reject request bodies over MAX_BODY_BYTES with 413, before they are read into memory.
+
+    Checks Content-Length up front and also counts streamed (chunked) bodies. Pure ASGI so it
+    runs before routing and body parsing.
+    """
+
+    def __init__(self, app, max_bytes: int):
+        self.app = app
+        self.max_bytes = max_bytes
+
+    async def __call__(self, scope, receive, send):
+        if scope["type"] != "http":
+            return await self.app(scope, receive, send)
+        for name, value in scope.get("headers", ()):
+            if name == b"content-length":
+                try:
+                    too_big = int(value) > self.max_bytes
+                except ValueError:
+                    too_big = True
+                if too_big:
+                    return await self._reject(scope, receive, send)
+        seen = 0
+        started = False  # has a response started going out?
+        rejected = False
+
+        async def guarded_send(message):
+            nonlocal started
+            if rejected:
+                return  # we already answered 413; drop whatever the app sends
+            if message["type"] == "http.response.start":
+                started = True
+            await send(message)
+
+        async def limited_receive():
+            nonlocal seen, rejected
+            if rejected:
+                return {"type": "http.disconnect"}
+            message = await receive()
+            if message["type"] == "http.request":
+                seen += len(message.get("body", b""))
+                if seen > self.max_bytes and not started:
+                    # Answer now and tell the app the client went away. (Raising here would be
+                    # caught by FastAPI's body parsing and turned into a 400.)
+                    await self._reject(scope, receive, send)
+                    rejected = True
+                    return {"type": "http.disconnect"}
+            return message
+
+        await self.app(scope, limited_receive, guarded_send)
+
+    @staticmethod
+    async def _reject(scope, receive, send):
+        await JSONResponse(status_code=413, content={"detail": "Request body too large"})(scope, receive, send)
+
+
+# Registered before CORS so CORS wraps it (413s still carry CORS headers); runs before body parsing.
+api.add_middleware(BodySizeLimit, max_bytes=MAX_BODY_BYTES)
 
 # CORS (SECURITY.md F8): explicit origins from env (defaults are local dev only), explicit
 # methods/headers, and no credentialed requests: auth uses bearer tokens, not cookies.
@@ -107,12 +178,20 @@ api.add_middleware(
     allow_credentials=False,
     allow_methods=["GET", "POST", "OPTIONS"],
     allow_headers=["Content-Type", "Accept", "Authorization", "X-Request-ID"],
-    expose_headers=["X-Request-ID"],
+    expose_headers=["X-Request-ID", "Retry-After"],
     max_age=600,
 )
 
 
 _REQUEST_ID_RE = re.compile(r"^[A-Za-z0-9._-]{8,64}$")
+
+
+def _route_template(path: str, route) -> str:
+    """Route template incl. its mount prefix (FastAPI keeps router routes unprefixed in scope)."""
+    if route is None:
+        return path  # unmatched (404) or CORS preflight
+    prefix = "/api/v1" if path.startswith("/api/v1/") else "/api" if path.startswith("/api/") else ""
+    return prefix + route.path
 
 
 @api.middleware("http")
@@ -130,6 +209,11 @@ async def _request_context(request: Request, call_next):
         response = await call_next(request)
         status = response.status_code
         response.headers["X-Request-ID"] = request_id
+        path = request.url.path
+        if path.startswith("/api/") and not path.startswith("/api/v1/"):
+            # Unversioned routes are kept for older web builds; same handlers as /api/v1.
+            response.headers["Deprecation"] = "true"
+            response.headers["Link"] = f'</api/v1{path[4:]}>; rel="successor-version"'
         return response
     finally:
         route = request.scope.get("route")
@@ -137,7 +221,7 @@ async def _request_context(request: Request, call_next):
             "http_request",
             extra={
                 "method": request.method,
-                "route": getattr(route, "path", request.url.path),
+                "route": _route_template(request.url.path, route),
                 "status": status,
                 "duration_ms": round((time.perf_counter() - start) * 1000, 1),
             },
@@ -347,10 +431,41 @@ async def _stream_graph(graph_input: Any, thread_id: str, api_keys: keys.ApiKeys
 _SSE_HEADERS = {"Cache-Control": "no-cache", "X-Accel-Buffering": "no"}
 
 
+# ---------- Rate limits ----------
+
+
+def _client_id(request: Request) -> str:
+    # The proxy-resolved client IP (uvicorn trusts X-Forwarded-For only from FORWARDED_ALLOW_IPS).
+    # Replaced by the authenticated user/tenant once auth lands.
+    return request.client.host if request.client else "unknown"
+
+
+async def _enforce(request: Request, scope: str, limit: int) -> None:
+    if not limits.enabled:
+        return
+    retry_after = await limiter.hit(f"{scope}:{_client_id(request)}", limit)
+    if retry_after is not None:
+        log.warning("rate_limited", extra={"scope": scope})
+        raise HTTPException(
+            status_code=429, detail="Too many requests, slow down", headers={"Retry-After": str(retry_after)}
+        )
+
+
+async def limit_requests(request: Request) -> None:
+    await _enforce(request, "req", limits.requests_per_minute)
+
+
+async def limit_runs(request: Request) -> None:
+    """Graph runs cost LLM/tool calls: a tighter limit on top of the general one."""
+    await _enforce(request, "run", limits.runs_per_minute)
+
+
 # ---------- Routes ----------
 
+router = APIRouter()
 
-@api.get("/api/health")
+
+@router.get("/health")
 async def health():
     """`modes`: whether the next plan will use live services or dummy data."""
     return {
@@ -360,7 +475,7 @@ async def health():
     }
 
 
-@api.get("/api/agents")
+@router.get("/agents", dependencies=[Depends(limit_requests)])
 async def agents():
     """Static description of the pipeline, used by the UI to render the agent graph."""
     return [
@@ -375,7 +490,7 @@ async def agents():
     ]
 
 
-@api.post("/api/plan", response_model=PlanResponse)
+@router.post("/plan", response_model=PlanResponse, dependencies=[Depends(limit_requests), Depends(limit_runs)])
 async def create_plan(req: PlanRequest):
     """Run the agents until the human-approval checkpoint (waits for the result)."""
     _check_capacity()
@@ -383,7 +498,7 @@ async def create_plan(req: PlanRequest):
     return await _run_blocking(_initial_input(req), thread_id, keys.resolve())
 
 
-@api.post("/api/plan/stream")
+@router.post("/plan/stream", dependencies=[Depends(limit_requests), Depends(limit_runs)])
 async def create_plan_stream(req: PlanRequest):
     """Same as POST /api/plan but streams agent progress as Server-Sent Events."""
     _check_capacity()
@@ -395,12 +510,16 @@ async def create_plan_stream(req: PlanRequest):
     )
 
 
-@api.get("/api/plan/{thread_id}", response_model=PlanResponse)
+@router.get("/plan/{thread_id}", response_model=PlanResponse, dependencies=[Depends(limit_requests)])
 async def get_plan(thread_id: str):
     return await _snapshot(thread_id)
 
 
-@api.post("/api/plan/{thread_id}/approve", response_model=PlanResponse)
+@router.post(
+    "/plan/{thread_id}/approve",
+    response_model=PlanResponse,
+    dependencies=[Depends(limit_requests), Depends(limit_runs)],
+)
 async def approve_plan(thread_id: str, body: ApprovalRequest):
     """Resume a thread paused at human approval (waits for the result)."""
     current = await _snapshot(thread_id)
@@ -410,7 +529,7 @@ async def approve_plan(thread_id: str, body: ApprovalRequest):
     return await _run_blocking(Command(resume=body.resume_value()), thread_id, keys.resolve())
 
 
-@api.post("/api/plan/{thread_id}/approve/stream")
+@router.post("/plan/{thread_id}/approve/stream", dependencies=[Depends(limit_requests), Depends(limit_runs)])
 async def approve_plan_stream(thread_id: str, body: ApprovalRequest):
     current = await _snapshot(thread_id)
     if current.status != "awaiting_approval":
@@ -421,3 +540,8 @@ async def approve_plan_stream(thread_id: str, body: ApprovalRequest):
         media_type="text/event-stream",
         headers=_SSE_HEADERS,
     )
+
+
+api.include_router(router, prefix="/api/v1", tags=["v1"])
+# Deprecated aliases for web builds that predate /api/v1 (Deprecation + Link headers added above).
+api.include_router(router, prefix="/api", tags=["legacy"], deprecated=True, include_in_schema=False)

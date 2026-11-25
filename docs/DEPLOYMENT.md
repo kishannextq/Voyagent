@@ -35,7 +35,11 @@ API runtime settings: `APP_ENV` (`staging`/`production` require `DATABASE_URL` a
 `FRONTEND_ORIGINS` (comma-separated, required in deployed envs), optional `FRONTEND_ORIGIN_REGEX`,
 `CHECKPOINTER_SETUP=false` on services (run setup as a migration task), `PG_POOL_MAX`, `LOG_LEVEL`,
 `MAX_CONCURRENT_RUNS` (per process, default 32; 503 beyond), `RUN_TIMEOUT_SECONDS` (default 300),
-`MCP_CONNECT_TIMEOUT` / `MCP_CALL_TIMEOUT` (default 30 s).
+`MCP_CONNECT_TIMEOUT` / `MCP_CALL_TIMEOUT` (default 30 s), `MAX_BODY_BYTES` (default 64 KiB),
+`RATE_LIMIT_REQUESTS_PER_MINUTE` (120), `RATE_LIMIT_RUNS_PER_MINUTE` (10), `RATE_LIMIT_ENABLED`,
+`FORWARDED_ALLOW_IPS` (proxies whose `X-Forwarded-For` is trusted; image default `127.0.0.1`, set to the
+ALB subnets in AWS, never `*`). Rate limits fail open if Redis errors at runtime (logged as
+`rate_limit_unavailable`). Health check path: `/api/v1/health`.
 
 The API is async (one event loop per process). psycopg's async driver does not support Windows'
 default ProactorEventLoop, so run the API with `DATABASE_URL` on Linux/containers; on Windows,

@@ -17,9 +17,12 @@ RUN apt-get update && apt-get upgrade -y --no-install-recommends \
     && groupadd --system app && useradd --system --gid app --home-dir /app app
 WORKDIR /app
 COPY --from=build --chown=app:app /app /app
-ENV PATH="/app/.venv/bin:$PATH" PYTHONUNBUFFERED=1 PYTHONDONTWRITEBYTECODE=1 PORT=8000
+# FORWARDED_ALLOW_IPS: trust X-Forwarded-For only from these proxies (read by uvicorn). Deployments
+# set the load balancer subnets; never '*', which lets any client spoof its IP and dodge rate limits.
+ENV PATH="/app/.venv/bin:$PATH" PYTHONUNBUFFERED=1 PYTHONDONTWRITEBYTECODE=1 PORT=8000 \
+    FORWARDED_ALLOW_IPS=127.0.0.1
 USER app
 EXPOSE 8000
 HEALTHCHECK --interval=15s --timeout=3s --start-period=20s --retries=3 \
-  CMD python -c "import os,urllib.request; urllib.request.urlopen(f'http://127.0.0.1:{os.environ[\"PORT\"]}/api/health', timeout=2)"
-CMD ["sh", "-c", "exec uvicorn server:api --host 0.0.0.0 --port ${PORT} --proxy-headers --forwarded-allow-ips='*'"]
+  CMD python -c "import os,urllib.request; urllib.request.urlopen(f'http://127.0.0.1:{os.environ[\"PORT\"]}/api/v1/health', timeout=2)"
+CMD ["sh", "-c", "exec uvicorn server:api --host 0.0.0.0 --port ${PORT} --proxy-headers"]

@@ -9,6 +9,7 @@ import fakeredis  # noqa: E402
 import pytest  # noqa: E402
 from fastapi.testclient import TestClient  # noqa: E402
 
+import redis_conn  # noqa: E402
 import run_store  # noqa: E402
 import server  # noqa: E402
 
@@ -70,30 +71,31 @@ def test_redis_store_roundtrip_with_ttl():
         assert await store.get("abc") == META
         assert 0 < await r.ttl("api:run:abc") <= 120
         assert await store.get("missing") is None
-        await store.aclose()
 
     asyncio.run(go())
 
 
 @pytest.mark.parametrize("env", ["staging", "production"])
-def test_build_requires_redis_outside_local(monkeypatch, env):
+def test_redis_required_outside_local(monkeypatch, env):
     monkeypatch.setenv("APP_ENV", env)
     monkeypatch.delenv("REDIS_URL", raising=False)
     with pytest.raises(RuntimeError, match="REDIS_URL is required"):
-        asyncio.run(run_store.build())
+        asyncio.run(redis_conn.connect())
 
 
-def test_build_rejects_unknown_app_env(monkeypatch):
+def test_unknown_app_env_rejected(monkeypatch):
     monkeypatch.setenv("APP_ENV", "prod")
     monkeypatch.delenv("REDIS_URL", raising=False)
     with pytest.raises(RuntimeError, match="APP_ENV must be one of"):
-        asyncio.run(run_store.build())
+        asyncio.run(redis_conn.connect())
 
 
-def test_build_memory_locally(monkeypatch):
+def test_memory_store_locally(monkeypatch):
     monkeypatch.setenv("APP_ENV", "local")
     monkeypatch.delenv("REDIS_URL", raising=False)
-    assert isinstance(asyncio.run(run_store.build()), run_store.MemoryRunStore)
+    assert asyncio.run(redis_conn.connect()) is None
+    assert isinstance(run_store.build(None), run_store.MemoryRunStore)
+    assert isinstance(run_store.build(fakeredis.FakeAsyncRedis()), run_store.RedisRunStore)
 
 
 # ---- server integration ----
@@ -106,25 +108,25 @@ def client():
 
 
 def test_generated_thread_id_is_random_and_has_no_user_id(client):
-    body = client.post("/api/plan", json={"query": "3 days in Rome", "user_id": "alice"}).json()
+    body = client.post("/api/v1/plan", json={"query": "3 days in Rome", "user_id": "alice"}).json()
     assert re.fullmatch(r"[0-9a-f]{32}", body["thread_id"])
     assert "alice" not in body["thread_id"]
 
 
 def test_run_metadata_persisted_and_served(client):
-    tid = client.post("/api/plan", json={"query": "3 days in Rome"}).json()["thread_id"]
+    tid = client.post("/api/v1/plan", json={"query": "3 days in Rome"}).json()["thread_id"]
     meta = asyncio.run(server.runs.get(tid))  # in-memory store: not bound to a loop
     assert meta["modes"] == {"llm": "mock", "flights": "mock", "hotels": "mock", "weather": "mock"}
     assert meta["dummy_nodes"]["supervisor"] is True
-    assert client.get(f"/api/plan/{tid}").json()["dummy_nodes"] == meta["dummy_nodes"]
+    assert client.get(f"/api/v1/plan/{tid}").json()["dummy_nodes"] == meta["dummy_nodes"]
 
 
 def test_cannot_start_new_plan_in_existing_thread(client):
-    tid = client.post("/api/plan", json={"query": "3 days in Rome"}).json()["thread_id"]
-    r = client.post("/api/plan", json={"query": "5 days in Paris", "thread_id": tid})
+    tid = client.post("/api/v1/plan", json={"query": "3 days in Rome"}).json()["thread_id"]
+    r = client.post("/api/v1/plan", json={"query": "5 days in Paris", "thread_id": tid})
     assert r.status_code == 409
 
 
 @pytest.mark.parametrize("bad", ["short", "has space here", "../../etc/passwd", "x" * 65])
 def test_client_thread_id_format_validated(client, bad):
-    assert client.post("/api/plan", json={"query": "3 days in Rome", "thread_id": bad}).status_code == 422
+    assert client.post("/api/v1/plan", json={"query": "3 days in Rome", "thread_id": bad}).status_code == 422

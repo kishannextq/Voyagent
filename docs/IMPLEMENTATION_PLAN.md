@@ -24,10 +24,11 @@ Updated continuously. `[x]` = implemented and verified (how is noted); `[ ]` = n
 - [x] Pooled Postgres checkpointer; unreachable DB fails startup; memory only for unset URL in local/test (F10) — Postgres integration test (6 concurrent runs + resume from a second instance) passed in CI
 - [x] Async graph execution on the event loop (async nodes, `astream`, `AsyncPostgresSaver`, async Redis); one persistent MCP session per service instead of a subprocess per call; execution bounds: `MAX_CONCURRENT_RUNS` (503 when full), `RUN_TIMEOUT_SECONDS`, recursion limit (F7) — 7 tests incl. real-subprocess reuse proof; live uvicorn plan→approve smoke test
 - [x] MCP subprocess gets a minimal env (F11); Tavily key in Authorization header (F12, live call unverified)
-- [ ] `/api/v1` versioned routes; old routes kept until web migrates
+- [x] `/api/v1` versioned routes; web migrated; unversioned aliases kept with `Deprecation`/`Link` headers, hidden from OpenAPI
 - [ ] Cognito JWT validation, RBAC, tenant model; server-generated unguessable thread IDs scoped to tenant/user (F2)
 - [x] Strict CORS (F8)
-- [ ] Request body size limit at the edge/ASGI; rate limiting (Redis)
+- [x] Request body size limit (ASGI, 413, incl. chunked bodies); per-client rate limits in Redis with in-memory fallback local/test (429 + `Retry-After`); shared Redis client; trusted-proxy fix for `X-Forwarded-For` (F15) — 14 tests
+- [ ] Edge limits in AWS: WAF rate-based rules + ALB/CloudFront body limits (Phase 8)
 - [ ] Alembic migrations for application tables
 - [x] `apps/web` upgraded to Next.js 15.5.29 + React 19 (F14) on `feature/frontend-nextjs`: `npm audit --omit=dev` clean; tsc + build; headless-Edge UI run plan→approve against the mock API with no console errors
 - [ ] Next.js 16 upgrade (15.x is on security backports; plan before 15 support ends)

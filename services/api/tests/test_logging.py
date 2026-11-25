@@ -77,20 +77,22 @@ def test_request_id_generated_and_propagated():
 
 
 def _check_request_ids(client):
-    generated = client.get("/api/health").headers["x-request-id"]
+    generated = client.get("/api/v1/health").headers["x-request-id"]
     assert len(generated) == 32
     assert (
-        client.get("/api/health", headers={"X-Request-ID": "trace-abc-12345"}).headers["x-request-id"]
+        client.get("/api/v1/health", headers={"X-Request-ID": "trace-abc-12345"}).headers["x-request-id"]
         == "trace-abc-12345"
     )
     # Malformed IDs (header injection attempts) are replaced, not reflected.
-    assert client.get("/api/health", headers={"X-Request-ID": "bad id\r\nx"}).headers["x-request-id"] != "bad id\r\nx"
+    assert (
+        client.get("/api/v1/health", headers={"X-Request-ID": "bad id\r\nx"}).headers["x-request-id"] != "bad id\r\nx"
+    )
 
 
 def test_plan_run_logs_no_user_content(captured):
     marker = "Zanzibar-Marker-7781"
     with TestClient(server.api) as client:
-        r = client.post("/api/plan/stream", json={"query": f"4 day trip to Paris, note {marker}"})
+        r = client.post("/api/v1/plan/stream", json={"query": f"4 day trip to Paris, note {marker}"})
     assert r.status_code == 200
 
     assert captured, "expected log lines"

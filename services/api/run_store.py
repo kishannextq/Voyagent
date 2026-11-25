@@ -15,8 +15,6 @@ import time
 from collections import OrderedDict
 from typing import Any, Protocol
 
-import settings
-
 log = logging.getLogger("voyagent.run_store")
 
 DEFAULT_TTL = int(os.getenv("RUN_META_TTL_SECONDS", str(7 * 24 * 3600)))
@@ -28,7 +26,6 @@ RunMeta = dict[str, Any]  # {"modes": {...}, "fallback": {...}|None, "dummy_node
 class RunStore(Protocol):
     async def get(self, thread_id: str) -> RunMeta | None: ...
     async def save(self, thread_id: str, meta: RunMeta) -> None: ...
-    async def aclose(self) -> None: ...
 
 
 class MemoryRunStore:
@@ -58,9 +55,6 @@ class MemoryRunStore:
             while len(self._data) > self._max:
                 self._data.popitem(last=False)
 
-    async def aclose(self) -> None:
-        return None
-
     def __len__(self) -> int:
         return len(self._data)
 
@@ -79,25 +73,11 @@ class RedisRunStore:
     async def save(self, thread_id: str, meta: RunMeta) -> None:
         await self._r.set(self.PREFIX + thread_id, json.dumps(meta), ex=self._ttl)
 
-    async def aclose(self) -> None:
-        await self._r.aclose()
 
-
-async def build() -> RunStore:
-    """Create the store inside the running event loop (app lifespan); fails fast on a bad REDIS_URL."""
-    url = os.getenv("REDIS_URL", "").strip()
-    if url:
-        import redis.asyncio as redis
-
-        client = redis.Redis.from_url(url, socket_timeout=2, socket_connect_timeout=2, health_check_interval=30)
-        try:
-            await client.ping()  # fail fast on misconfiguration
-        except BaseException:
-            await client.aclose()
-            raise
+def build(redis_client) -> RunStore:
+    """Redis-backed when a client is given (redis_conn.connect enforces the APP_ENV policy)."""
+    if redis_client is not None:
         log.info("run_store_ready", extra={"backend": "redis"})
-        return RedisRunStore(client)
-    if settings.durable_required():
-        raise RuntimeError(f"REDIS_URL is required when APP_ENV={settings.app_env()}")
+        return RedisRunStore(redis_client)
     log.warning("run_store_ready", extra={"backend": "memory", "note": "local/test only"})
     return MemoryRunStore()

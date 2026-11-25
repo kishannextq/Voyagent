@@ -17,6 +17,7 @@ dependencies = [
     "psycopg[binary,pool]==3.3.4",
     "mcp==1.27.2",
     "aviationstack-mcp>=1.8.1",
+    "redis==6.4.0",
 ]
 
 [dependency-groups]
@@ -24,6 +25,7 @@ dev = [
     "pytest>=8.3",
     "httpx==0.28.1",
     "ruff>=0.8",
+    "fakeredis>=2.31",
 ]
 
 [tool.uv]

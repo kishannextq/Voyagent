@@ -13,7 +13,8 @@ Services never read another service's schema; they call its API.
 ## Current state
 
 Only LangGraph checkpoint tables exist (created by `PostgresSaver.setup()` when `DATABASE_URL`
-is set). Run metadata (`modes`, `fallback`, `dummy_nodes`) lives in process memory (SECURITY.md F6).
+is set). Run metadata (`modes`, `fallback`, `dummy_nodes`) lives in Redis under `api:run:{thread_id}`
+with a TTL (`RUN_META_TTL_SECONDS`, default 7 days); it moves to `app.plan_runs` once usage accounting lands.
 
 ## Planned schemas
 

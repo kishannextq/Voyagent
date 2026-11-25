@@ -27,6 +27,7 @@ logging_setup.configure("api")
 
 import keys  # noqa: E402
 import mock  # noqa: E402
+import run_store  # noqa: E402
 from graph import app as travel_graph  # noqa: E402
 
 log = logging.getLogger("voyagent.api")
@@ -126,7 +127,11 @@ class PlanRequest(BaseModel):
 
     query: str = Field(..., min_length=3, max_length=2000, description="Natural-language travel request")
     user_id: str = Field("demo_user", description="User identifier")
-    thread_id: str | None = Field(None, description="Existing thread to continue; a new one is created if omitted")
+    thread_id: str | None = Field(
+        None,
+        pattern=r"^[A-Za-z0-9_-]{8,64}$",
+        description="Optional client-chosen ID for a NEW thread (409 if it already exists); generated if omitted",
+    )
 
 
 class ApprovalRequest(BaseModel):
@@ -179,9 +184,17 @@ def _initial_input(req: PlanRequest) -> dict[str, Any]:
 
 
 # Per-thread run info (no secrets): service modes, fallback reason, which agents used dummy data.
-_thread_modes: dict[str, dict[str, str]] = {}
-_thread_fallback: dict[str, dict[str, str]] = {}
-_thread_dummy: dict[str, dict[str, bool]] = {}
+runs: run_store.RunStore = run_store.build()
+
+
+def _new_thread_id(req: "PlanRequest") -> str:
+    """Server-generated IDs are 128-bit random and carry no user identifier (SECURITY.md F2)."""
+    if req.thread_id is None:
+        return uuid.uuid4().hex
+    if travel_graph.get_state(_config(req.thread_id)).values:
+        # Never let a new request write into someone else's existing thread.
+        raise HTTPException(status_code=409, detail="Thread already exists")
+    return req.thread_id
 
 
 def _snapshot(thread_id: str) -> PlanResponse:
@@ -204,14 +217,15 @@ def _snapshot(thread_id: str) -> PlanResponse:
     else:
         status = "completed"
 
+    meta = runs.get(thread_id) or {}
     return PlanResponse(
         thread_id=thread_id,
         status=status,
         state=_public(values),
         interrupt=interrupt_value,
-        modes=_thread_modes.get(thread_id),
-        fallback=_thread_fallback.get(thread_id),
-        dummy_nodes=_thread_dummy.get(thread_id),
+        modes=meta.get("modes"),
+        fallback=meta.get("fallback"),
+        dummy_nodes=meta.get("dummy_nodes"),
     )
 
 
@@ -237,18 +251,22 @@ def _stream_graph(graph_input: Any, thread_id: str, api_keys: keys.ApiKeys) -> I
     carries this run's provider keys.
     """
     modes = keys.modes(api_keys)
-    _thread_modes[thread_id] = modes
+    meta = runs.get(thread_id) or {}
+    meta["modes"] = modes
+    meta.setdefault("dummy_nodes", {})
+    meta.setdefault("fallback", None)
+    runs.save(thread_id, meta)
     yield _sse("start", {"thread_id": thread_id, "modes": modes})
 
     ctx = contextvars.copy_context()
     ctx.run(keys.set_current, api_keys)
     run = ctx.run(keys.start_run)
-    dummy = _thread_dummy.setdefault(thread_id, {})
+    dummy = meta["dummy_nodes"]
     announced = False
-    if thread_id in _thread_fallback:
+    if meta["fallback"]:
         # This plan already fell back to dummy data (e.g. during planning): keep the rest of it
         # (approval → final plan) on dummy data too, so one plan never mixes live and dummy results.
-        run.fallback = _thread_fallback[thread_id]
+        run.fallback = meta["fallback"]
         announced = True
     try:
         chunks = ctx.run(
@@ -267,11 +285,13 @@ def _stream_graph(graph_input: Any, thread_id: str, api_keys: keys.ApiKeys) -> I
                     # Did this agent use dummy data? (read & reset per agent; agents run one at a time)
                     dummy[node] = run.used_dummy
                     run.used_dummy = False
+                    runs.save(thread_id, meta)
                     yield _sse("node", {"node": node, "data": _public(update or {}), "dummy": dummy[node]})
             if run.fallback and not announced:
                 # A live call failed: the run carries on with dummy data. Tell the UI once.
                 announced = True
-                _thread_fallback[thread_id] = run.fallback
+                meta["fallback"] = run.fallback
+                runs.save(thread_id, meta)
                 yield _sse("fallback", run.fallback)
         yield _sse("done", _snapshot(thread_id).model_dump())
     except Exception as exc:  # surface errors to the UI instead of dropping the stream
@@ -313,14 +333,14 @@ def agents():
 @api.post("/api/plan", response_model=PlanResponse)
 def create_plan(req: PlanRequest):
     """Run the agents until the human-approval checkpoint (blocking)."""
-    thread_id = req.thread_id or f"{req.user_id}_{uuid.uuid4().hex[:8]}"
+    thread_id = _new_thread_id(req)
     return _run_blocking(_initial_input(req), thread_id, keys.resolve())
 
 
 @api.post("/api/plan/stream")
 def create_plan_stream(req: PlanRequest):
     """Same as POST /api/plan but streams agent progress as Server-Sent Events."""
-    thread_id = req.thread_id or f"{req.user_id}_{uuid.uuid4().hex[:8]}"
+    thread_id = _new_thread_id(req)
     return StreamingResponse(
         _stream_graph(_initial_input(req), thread_id, keys.resolve()),
         media_type="text/event-stream",

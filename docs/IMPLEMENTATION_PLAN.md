@@ -18,7 +18,8 @@ Updated continuously. `[x]` = implemented and verified (how is noted); `[ ]` = n
 ## Phase 2 — API hardening  (`feature/backend-fastapi`, `feature/auth-cognito`)
 - [x] Remove "bring your own keys" end to end: web dialog/storage removed, stale keys wiped; API forbids unknown fields; `/api/health` no longer reveals key presence; 422s don't echo input; query/feedback length caps (10 API tests)
 - [x] Structured JSON logging with redaction + request IDs; all `print()` removed (F4) — 9 logging tests
-- [ ] Bounded, persistent run metadata (replace module-level dicts) (F6)
+- [x] Run metadata in Redis with TTL; bounded in-memory fallback local/test only; `APP_ENV` policy (F6)
+- [x] 128-bit server thread IDs without user ID; client IDs validated, 409 on existing thread (F2, partial)
 - [ ] Pooled Postgres checkpointer; fail fast in non-local envs instead of silent in-memory fallback (F10)
 - [ ] Async graph execution; reuse MCP sessions instead of spawning per call (F7)
 - [ ] MCP subprocess gets a minimal env, not the full process env (F11); Tavily key out of URL (F12)

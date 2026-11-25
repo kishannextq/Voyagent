@@ -36,6 +36,7 @@ register() {
     --query taskDefinition.taskDefinitionArn --output text
 }
 
+# shellcheck disable=SC2329  # invoked from on_exit (EXIT trap)
 rollback() {
   log "ROLLBACK: restoring previous task definitions"
   for svc in "${!PREVIOUS[@]}"; do
@@ -44,6 +45,7 @@ rollback() {
   aws ecs wait services-stable --cluster "$CLUSTER" --services "${!PREVIOUS[@]}" || true
   log "rollback finished"
 }
+# shellcheck disable=SC2329  # invoked by the EXIT trap
 on_exit() {
   local rc=$?
   if [ "$rc" -ne 0 ] && [ "${#PREVIOUS[@]}" -gt 0 ]; then

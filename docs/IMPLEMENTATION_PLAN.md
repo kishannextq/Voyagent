@@ -61,7 +61,8 @@ Updated continuously. `[x]` = implemented and verified (how is noted); `[ ]` = n
 ## Phase 6 — Guardrails  (`feature/guardrails`)
 - [x] Rails library + policy file (`guardrails/policy.yaml`, validated at startup): input rails before any model call (injection/jailbreak/prompt-leak/exfiltration/code-exec/role-tag/delimiter patterns on normalised text incl. FR/ES/PT/IT/DE; PII redaction email/card(Luhn)/IBAN/passport/phone); output rails on every model reply (system-prompt canary → withheld, PII, unsafe link schemes, length); tool outputs delimited as data
 - [x] Jailbreak/prompt-injection regression suite in CI: 40 known attacks blocked, 0/30 benign false positives (tuned set); held-out set 2/15 blocked, 0/15 false positives (generalisation floor)
-- [ ] Model-based injection classifier (e.g. Bedrock Guardrails prompt-attack filter via the gateway, config stubbed) — the deterministic rails generalise poorly (held-out 13%)
+- [x] Model-based injection classifier: `services/guard` (protectai/deberta-v3-base-prompt-injection-v2, Apache-2.0, ONNX, pinned revision + SHA-256 baked into the image); screens user requests/feedback (400), live tool results (withheld) and document chunks (whole passage withheld); fail-closed in staging/production. Measured: held-out attacks 13/15 (rules alone 2/15), benign false positives 2/45 — CI `safety` job with the real image
+- [x] Upload malware scanning: ClamAV 1.5.4 over clamd INSTREAM (`MALWARE_SCAN_URL=clamd://...`), fails closed; real ClamAV detects EICAR in CI; ECS service in Terraform
 - [ ] Bedrock Guardrails enabled (needs AWS)
 
 ## Phase 7 — Observability  (`feature/observability`)

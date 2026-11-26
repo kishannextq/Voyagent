@@ -1,7 +1,7 @@
 # Manual deploys only. Each GitHub environment (staging, production) must be configured with
 # required reviewers and these variables (no secrets: AWS access is via OIDC):
 #   AWS_REGION, AWS_DEPLOY_ROLE_ARN, ECS_CLUSTER, ECS_SUBNETS, ECS_SECURITY_GROUP,
-#   ECR_API, ECR_WEB, ECR_GATEWAY, PUBLIC_URL, COGNITO_ISSUER, COGNITO_CLIENT_ID, COGNITO_DOMAIN
+#   ECR_API, ECR_WEB, ECR_GATEWAY, ECR_GUARD, PUBLIC_URL, COGNITO_ISSUER, COGNITO_CLIENT_ID, COGNITO_DOMAIN
 # Not yet run: no AWS account is connected.
 name: Deploy
 
@@ -46,6 +46,7 @@ jobs:
           set -euo pipefail
           docker build -t "${{ vars.ECR_API }}:$IMAGE_TAG" services/api
           docker build -t "${{ vars.ECR_GATEWAY }}:$IMAGE_TAG" services/model-gateway
+          docker build -t "${{ vars.ECR_GUARD }}:$IMAGE_TAG" services/guard
           docker build -t "${{ vars.ECR_WEB }}:$IMAGE_TAG" \
             --build-arg NEXT_PUBLIC_API_URL="${{ vars.PUBLIC_URL }}" \
             --build-arg NEXT_PUBLIC_AUTH_MODE=cognito \
@@ -57,7 +58,7 @@ jobs:
       - name: Scan images (block HIGH/CRITICAL with fixes)
         run: |
           set -euo pipefail
-          for img in "${{ vars.ECR_API }}" "${{ vars.ECR_WEB }}"; do
+          for img in "${{ vars.ECR_API }}" "${{ vars.ECR_WEB }}" "${{ vars.ECR_GUARD }}"; do
             docker run --rm -v /var/run/docker.sock:/var/run/docker.sock aquasec/trivy:0.76.2 image \
               --severity HIGH,CRITICAL --ignore-unfixed --exit-code 1 "$img:$IMAGE_TAG"
           done
@@ -66,6 +67,7 @@ jobs:
         run: |
           docker push "${{ vars.ECR_API }}:$IMAGE_TAG"
           docker push "${{ vars.ECR_GATEWAY }}:$IMAGE_TAG"
+          docker push "${{ vars.ECR_GUARD }}:$IMAGE_TAG"
           docker push "${{ vars.ECR_WEB }}:$IMAGE_TAG"
 
       - name: Migrate, roll out, smoke test (auto-rollback on failure)
@@ -76,5 +78,6 @@ jobs:
           ECR_API: ${{ vars.ECR_API }}
           ECR_WEB: ${{ vars.ECR_WEB }}
           ECR_GATEWAY: ${{ vars.ECR_GATEWAY }}
+          ECR_GUARD: ${{ vars.ECR_GUARD }}
           HEALTH_URL: ${{ vars.PUBLIC_URL }}/api/v1/health
         run: bash infra/deploy/deploy.sh

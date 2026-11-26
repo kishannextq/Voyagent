@@ -17,6 +17,7 @@ from langchain_mcp_adapters.client import MultiServerMCPClient
 from langchain_mcp_adapters.tools import load_mcp_tools
 
 import agent_config
+import guard_client
 import guardrails
 import keys
 import metrics
@@ -224,7 +225,12 @@ async def call_tool(service: str, tool_name: str, args: dict | None = None) -> s
     if err:
         raise ToolFailed(err[0], keys.redact(err[1]))
     # Tool results are data: delimited and capped before any agent puts them in a prompt.
-    return guardrails.tool_output(service, keys.redact(tool_format.normalize(service, tool_name, raw)))
+    text = keys.redact(tool_format.normalize(service, tool_name, raw))
+    # Indirect prompt injection (e.g. instructions planted in a web page) is withheld before any
+    # agent sees it. Fail-closed unavailability also withholds.
+    if await guard_client.is_injection(text, "tool_output"):
+        text = "[Result withheld by content policy: it contained instructions aimed at AI systems.]"
+    return guardrails.tool_output(service, text)
 
 
 # Key field -> service name used in the API's `modes`

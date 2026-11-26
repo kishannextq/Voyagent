@@ -25,6 +25,7 @@ import logging_setup
 logging_setup.configure("api")
 
 import auth  # noqa: E402
+import guard_client  # noqa: E402
 import guardrails  # noqa: E402
 import memory  # noqa: E402
 import metrics  # noqa: E402
@@ -393,20 +394,35 @@ async def limit_runs(request: Request) -> None:
     await _enforce(request, "run", limits.runs_per_minute)
 
 
-def _screen(text: str) -> str:
-    """Input rails (guardrails/policy.yaml): 400 on injection/jailbreak patterns; PII redacted."""
+BLOCKED = "Request blocked by content policy. If that wasn't your intent, please rephrase."
+
+
+async def _screen(text: str) -> str:
+    """Input rails: deterministic patterns (guardrails/policy.yaml), then the injection classifier
+    (guard service, if configured). 400 when either flags the text; PII is redacted."""
     verdict = guardrails.check_input(text)
     if not verdict.allowed:
-        raise HTTPException(status_code=400, detail="Request blocked by content policy")
+        raise HTTPException(status_code=400, detail=BLOCKED)
+    if guard_client.enabled():
+        try:
+            flagged = (await guard_client.classify([verdict.text]))[0]
+        except guard_client.GuardUnavailable:
+            if guard_client.fail_closed():
+                raise HTTPException(status_code=503, detail="Content screening unavailable, try again shortly") from None
+            flagged = False
+        if flagged:
+            log.warning("guardrail_input_blocked", extra={"rule": "classifier"})
+            metrics.guardrail_events.labels("input_blocked", "classifier").inc()
+            raise HTTPException(status_code=400, detail=BLOCKED)
     return verdict.text
 
 
-def _start_payload(req: "PlanRequest", principal: auth.Principal) -> dict:
-    return {"query": _screen(req.query), "user_id": principal.sub}
+async def _start_payload(req: "PlanRequest", principal: auth.Principal) -> dict:
+    return {"query": await _screen(req.query), "user_id": principal.sub}
 
 
-def _resume_payload(body: "ApprovalRequest") -> dict:
-    return {"approved": body.approved, "feedback": _screen(body.feedback) if body.feedback else ""}
+async def _resume_payload(body: "ApprovalRequest") -> dict:
+    return {"approved": body.approved, "feedback": await _screen(body.feedback) if body.feedback else ""}
 
 
 async def current_principal(request: Request) -> auth.Principal:
@@ -483,7 +499,7 @@ async def list_plans(
 @router.post("/plan", response_model=PlanResponse, dependencies=_RUN)
 async def create_plan(req: PlanRequest, principal: Caller):
     """Run the agents until the human-approval checkpoint (waits for the result)."""
-    payload = _start_payload(req, principal)
+    payload = await _start_payload(req, principal)
     thread_id = await _new_thread_id(req, principal)
     return await _run_blocking(thread_id, "start", payload, principal)
 
@@ -491,7 +507,7 @@ async def create_plan(req: PlanRequest, principal: Caller):
 @router.post("/plan/stream", dependencies=_RUN)
 async def create_plan_stream(req: PlanRequest, principal: Caller):
     """Same as POST /plan but streams agent progress as Server-Sent Events."""
-    payload = _start_payload(req, principal)
+    payload = await _start_payload(req, principal)
     thread_id = await _new_thread_id(req, principal)
     return StreamingResponse(
         await _start(thread_id, "start", payload, principal),
@@ -517,7 +533,7 @@ async def approve_plan(thread_id: str, body: ApprovalRequest, principal: Caller)
     current = await _snapshot(thread_id)
     if current.status != "awaiting_approval":
         raise HTTPException(status_code=409, detail="Thread is not awaiting approval")
-    return await _run_blocking(thread_id, "resume", _resume_payload(body), principal)
+    return await _run_blocking(thread_id, "resume", await _resume_payload(body), principal)
 
 
 @router.post("/plan/{thread_id}/approve/stream", dependencies=_RUN)
@@ -527,7 +543,7 @@ async def approve_plan_stream(thread_id: str, body: ApprovalRequest, principal: 
     if current.status != "awaiting_approval":
         raise HTTPException(status_code=409, detail="Thread is not awaiting approval")
     return StreamingResponse(
-        await _start(thread_id, "resume", _resume_payload(body), principal),
+        await _start(thread_id, "resume", await _resume_payload(body), principal),
         media_type="text/event-stream",
         headers=_SSE_HEADERS,
     )
@@ -575,6 +591,7 @@ class DocumentView(BaseModel):
     status: str
     scan: str
     chunk_count: int
+    flagged_chunks: int = 0  # chunks withheld by the injection classifier
     error: str | None = None
     created_at: dt.datetime | None = None
 

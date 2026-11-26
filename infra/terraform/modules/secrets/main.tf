@@ -61,7 +61,7 @@ resource "aws_kms_alias" "this" {
 }
 
 resource "random_password" "generated" {
-  for_each = toset(["ORCHESTRATOR_TOKEN", "LITELLM_MASTER_KEY"])
+  for_each = toset(["ORCHESTRATOR_TOKEN", "LITELLM_MASTER_KEY", "GUARD_TOKEN"])
   length   = 48
   special  = false
 }

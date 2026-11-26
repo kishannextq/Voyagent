@@ -1,0 +1,33 @@
+[project]
+name = "voyagent-guard"
+version = "0.1.0"
+description = "Voyagent prompt-injection classifier service (internal)"
+requires-python = ">=3.13,<3.14"
+dependencies = [
+    "fastapi==0.162.4",
+    "uvicorn==0.47.0",
+    "onnxruntime==1.31.1",
+    "tokenizers==0.23.3",
+    "numpy==2.5.4",
+]
+
+[dependency-groups]
+dev = ["pytest>=8.3", "httpx==0.28.1", "ruff>=0.8"]
+
+[tool.uv]
+# Supply-chain cooldown: resolve only releases published before this date (bump deliberately).
+exclude-newer = "2026-11-11T00:00:00Z"
+package = false
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["."]
+
+[tool.ruff]
+line-length = 120
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "B", "S"]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/*" = ["S101"]

@@ -41,6 +41,10 @@ RAG: `RAG_ENABLED`, `RAG_EMBEDDER` (`gateway` in deployed envs; must match acros
 `RAG_EMBED_MODEL`, `RAG_EMBED_DIM` (fixed at migration time), `RAG_RERANKER`, `RAG_MAX_UPLOAD_BYTES`,
 `RAG_MAX_PDF_PAGES`, `MALWARE_SCAN_URL`, `RAG_REQUIRE_SCAN=true`. Worker: `python ingest_worker.py`.
 
+Content safety: `GUARD_URL`, `GUARD_TOKEN`, `GUARD_FAIL_MODE` (closed in staging/production),
+`GUARD_TIMEOUT_SECONDS`; `MALWARE_SCAN_URL` (`clamd://clamav:3310`), `MALWARE_SCAN_TIMEOUT_SECONDS`.
+Local: `docker compose --profile safety up` (ClamAV needs a few minutes to load signatures).
+
 Telemetry: `OTEL_EXPORTER_OTLP_ENDPOINT` (traces; unset = off), `OTEL_SERVICE_NAME`, `METRICS_PORT`
 (9464; never expose publicly — scrape from inside the VPC).
 

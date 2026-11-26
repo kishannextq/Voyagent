@@ -73,6 +73,9 @@ services:
       MOCK_MODE: ${MOCK_MODE:-true}
       CHECKPOINTER_SETUP: "false"  # done by the migrate service
       MOCK_DELAY: ${MOCK_DELAY:-0.4}
+      GUARD_URL: ${GUARD_URL:-}
+      GUARD_TOKEN: ${GUARD_TOKEN:-local-only-guard-token}
+      MALWARE_SCAN_URL: ${MALWARE_SCAN_URL:-}
       ORCHESTRATOR_TOKEN: ${ORCHESTRATOR_TOKEN:-local-only-orchestrator-token}
       LLM_GATEWAY_URL: ${LLM_GATEWAY_URL:-}
       METRICS_PORT: "9464"
@@ -97,6 +100,9 @@ services:
       REDIS_URL: redis://redis:6379/0
       APP_ENV: ${APP_ENV:-local}
       RAG_EMBEDDER: ${RAG_EMBEDDER:-hash}
+      GUARD_URL: ${GUARD_URL:-}
+      GUARD_TOKEN: ${GUARD_TOKEN:-local-only-guard-token}
+      MALWARE_SCAN_URL: ${MALWARE_SCAN_URL:-}
       LLM_GATEWAY_URL: ${LLM_GATEWAY_URL:-}
       LLM_GATEWAY_KEY: ${LLM_GATEWAY_KEY:-}
       METRICS_PORT: "9464"
@@ -120,6 +126,9 @@ services:
       COGNITO_USER_POOL_ID: ${COGNITO_USER_POOL_ID:-}
       COGNITO_CLIENT_IDS: ${COGNITO_CLIENT_IDS:-}
       ORCHESTRATOR_URL: http://orchestrator:8001
+      GUARD_URL: ${GUARD_URL:-}
+      GUARD_TOKEN: ${GUARD_TOKEN:-local-only-guard-token}
+      MALWARE_SCAN_URL: ${MALWARE_SCAN_URL:-}
       METRICS_PORT: "9464"
       OTEL_EXPORTER_OTLP_ENDPOINT: ${OTEL_EXPORTER_OTLP_ENDPOINT:-}
       RAG_EMBEDDER: ${RAG_EMBEDDER:-hash}
@@ -197,6 +206,26 @@ services:
       - ./infra/observability/grafana/dashboards:/var/lib/grafana/dashboards:ro
     ports: ["127.0.0.1:3001:3000"]
     depends_on: [prometheus, loki, tempo]
+
+  # ---- Content safety (docker compose --profile safety up; set GUARD_URL=http://guard:8002 and
+  # MALWARE_SCAN_URL=clamd://clamav:3310 for the app services) ----
+  guard:
+    profiles: ["safety"]
+    build: ./services/guard
+    environment:
+      GUARD_TOKEN: ${GUARD_TOKEN:-local-only-guard-token}
+    ports: ["127.0.0.1:8002:8002"]
+
+  clamav:
+    profiles: ["safety"]
+    image: clamav/clamav:1.5.4  # signatures are refreshed by freshclam at start and every few hours
+    ports: ["127.0.0.1:3310:3310"]
+    healthcheck:
+      test: ["CMD", "clamdcheck.sh"]
+      interval: 30s
+      timeout: 10s
+      start_period: 300s
+      retries: 3
 
 volumes:
   pgdata:

@@ -21,6 +21,7 @@ jobs:
       gateway: ${{ steps.filter.outputs.gateway }}
       observability: ${{ steps.filter.outputs.observability }}
       infra: ${{ steps.filter.outputs.infra }}
+      guard: ${{ steps.filter.outputs.guard }}
     steps:
       - uses: actions/checkout@v4
       - uses: dorny/paths-filter@v3
@@ -29,6 +30,7 @@ jobs:
           filters: |
             web: ['apps/web/**', 'tests/e2e/**', '.github/workflows/ci.yml']
             api: ['services/api/**', 'tests/load/**', 'infra/resilience/**', 'tools/**', 'docker-compose.yml', '.github/workflows/ci.yml']
+            guard: ['services/guard/**', '.github/workflows/ci.yml']
             infra: ['infra/terraform/**', 'infra/deploy/**', '.github/workflows/**']
             observability: ['infra/observability/**', 'docker-compose.yml', '.github/workflows/ci.yml']
             gateway: ['services/model-gateway/**', 'tools/mock-llm/**', 'services/api/config.py', 'services/api/tests/test_gateway.py', '.github/workflows/ci.yml']
@@ -299,6 +301,70 @@ jobs:
       - name: Stack logs
         if: failure()
         run: docker compose logs --tail 80 api orchestrator postgres
+
+  # Content safety with the real services: the injection classifier image (model pinned and
+  # checksummed at build) and ClamAV detecting the EICAR test file.
+  safety:
+    needs: changes
+    if: needs.changes.outputs.api == 'true' || needs.changes.outputs.guard == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-buildx-action@v3
+      - name: Build guard image (model download cached between runs)
+        uses: docker/build-push-action@v6
+        with:
+          context: services/guard
+          load: true
+          push: false
+          tags: voyagent-guard:ci
+          cache-from: type=gha,scope=guard
+          cache-to: type=gha,mode=max,scope=guard
+      - name: Start guard and ClamAV
+        run: |
+          docker run -d --name guard -p 8002:8002 -e GUARD_TOKEN=ci-guard-token-0123456789 voyagent-guard:ci
+          docker run -d --name clamav -p 3310:3310 clamav/clamav:1.5.4
+      - uses: astral-sh/setup-uv@v6
+        with:
+          version: "0.13.7"
+          enable-cache: true
+          cache-dependency-glob: |
+            services/api/uv.lock
+            services/guard/uv.lock
+      - name: Guard service tests (incl. real-model quality gate)
+        working-directory: services/guard
+        run: |
+          set -o pipefail
+          uv sync --frozen
+          docker cp guard:/models/prompt-injection ./model
+          GUARD_MODEL_DIR=$PWD/model uv run pytest -q -rs | tee guard.txt
+          ! grep -q SKIPPED guard.txt
+      - name: Wait for services (ClamAV loads signatures first)
+        run: |
+          for _ in $(seq 1 60); do curl -sf http://127.0.0.1:8002/health > /dev/null && break; sleep 5; done
+          for _ in $(seq 1 90); do docker exec clamav clamdcheck.sh > /dev/null 2>&1 && break; sleep 5; done
+          docker exec clamav clamdcheck.sh
+      - name: API integration with the real guard and ClamAV
+        working-directory: services/api
+        env:
+          GUARD_TEST_URL: http://127.0.0.1:8002
+          GUARD_TEST_TOKEN: ci-guard-token-0123456789
+          CLAMD_TEST_URL: clamd://127.0.0.1:3310
+        run: |
+          set -o pipefail
+          uv sync --frozen
+          uv run pytest -q -rs tests/test_guard_and_scanner.py | tee safety.txt
+          ! grep -q SKIPPED safety.txt
+      - name: Scan guard image (Trivy)
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0 (pinned by SHA)
+        with:
+          image-ref: voyagent-guard:ci
+          severity: HIGH,CRITICAL
+          ignore-unfixed: true
+          exit-code: "1"
+      - name: Service logs
+        if: failure()
+        run: docker logs guard 2>&1 | tail -40; docker logs clamav 2>&1 | tail -40
 
   secrets-scan:
     runs-on: ubuntu-latest

@@ -42,7 +42,7 @@ variable "forwarded_allow_ips" {
 variable "desired" {
   type = map(number)
   default = {
-    web = 2, api = 2, orchestrator = 2, gateway = 2, ingest = 1
+    web = 2, api = 2, orchestrator = 2, gateway = 2, ingest = 1, guard = 2, clamav = 1
   }
 }
 variable "max" {
@@ -60,10 +60,11 @@ data "aws_region" "current" {}
 
 locals {
   region        = data.aws_region.current.region
-  repos         = toset(["api", "web", "model-gateway"])
+  repos         = toset(["api", "web", "model-gateway", "guard"])
   api_image     = "${aws_ecr_repository.this["api"].repository_url}:${var.image_tag}"
   web_image     = "${aws_ecr_repository.this["web"].repository_url}:${var.image_tag}"
   gateway_image = "${aws_ecr_repository.this["model-gateway"].repository_url}:${var.image_tag}"
+  guard_image   = "${aws_ecr_repository.this["guard"].repository_url}:${var.image_tag}"
   common_env = [
     { name = "APP_ENV", value = var.environment },
     { name = "MOCK_MODE", value = "false" },
@@ -74,13 +75,16 @@ locals {
     { name = "RAG_EMBEDDER", value = "gateway" },
     { name = "RAG_REQUIRE_SCAN", value = "true" },
     { name = "LLM_GATEWAY_URL", value = "http://gateway:4000" },
+    { name = "GUARD_URL", value = "http://guard:8002" },
+    { name = "GUARD_FAIL_MODE", value = "closed" },
+    { name = "MALWARE_SCAN_URL", value = "clamd://clamav:3310" },
   ]
   db_secrets = [
     { name = "DB_USER", valueFrom = "${var.db_master_secret_arn}:username::" },
     { name = "DB_PASSWORD", valueFrom = "${var.db_master_secret_arn}:password::" },
     { name = "REDIS_URL", valueFrom = var.redis_url_secret_arn },
   ]
-  logs = { for s in ["web", "api", "orchestrator", "gateway", "ingest", "jobs"] : s => {
+  logs = { for s in ["web", "api", "orchestrator", "gateway", "ingest", "jobs", "guard", "clamav"] : s => {
     logDriver = "awslogs"
     options = {
       awslogs-group         = "/ecs/${var.name}/${s}"
@@ -147,7 +151,7 @@ resource "aws_vpc_security_group_ingress_rule" "from_alb" {
 }
 
 resource "aws_vpc_security_group_ingress_rule" "internal" {
-  for_each                     = { orchestrator = 8001, gateway = 4000 }
+  for_each                     = { orchestrator = 8001, gateway = 4000, guard = 8002, clamav = 3310 }
   security_group_id            = var.app_security_group_id
   referenced_security_group_id = var.app_security_group_id
   ip_protocol                  = "tcp"
@@ -212,7 +216,7 @@ resource "aws_iam_role_policy" "execution_secrets" {
 
 # Task roles: least privilege per service. Only the gateway may call Bedrock.
 resource "aws_iam_role" "task" {
-  for_each           = toset(["web", "api", "orchestrator", "gateway", "ingest", "jobs"])
+  for_each           = toset(["web", "api", "orchestrator", "gateway", "ingest", "jobs", "guard", "clamav"])
   name_prefix        = "${var.name}-${each.key}-"
   assume_role_policy = data.aws_iam_policy_document.ecs_assume.json
 }
@@ -253,13 +257,13 @@ locals {
         { name = "COGNITO_CLIENT_IDS", value = var.cognito_client_id },
         { name = "FORWARDED_ALLOW_IPS", value = var.forwarded_allow_ips },
       ])
-      secrets = concat(local.db_secrets, [{ name = "ORCHESTRATOR_TOKEN", valueFrom = var.secret_arns["ORCHESTRATOR_TOKEN"] }])
+      secrets = concat(local.db_secrets, [for k in ["ORCHESTRATOR_TOKEN", "GUARD_TOKEN"] : { name = k, valueFrom = var.secret_arns[k] }])
     }
     orchestrator = {
       cpu     = 1024, memory = 2048, image = local.api_image, port = 8001
       command = ["sh", "-c", "exec uvicorn orchestrator_app:app --host 0.0.0.0 --port 8001"]
       env     = local.common_env
-      secrets = concat(local.db_secrets, [for k in ["ORCHESTRATOR_TOKEN", "LLM_GATEWAY_KEY", "TAVILY_API_KEY", "AVIATION_STACK_API_KEY", "OPENWEATHER_API_KEY"] : { name = k, valueFrom = var.secret_arns[k] }])
+      secrets = concat(local.db_secrets, [for k in ["ORCHESTRATOR_TOKEN", "GUARD_TOKEN", "LLM_GATEWAY_KEY", "TAVILY_API_KEY", "AVIATION_STACK_API_KEY", "OPENWEATHER_API_KEY"] : { name = k, valueFrom = var.secret_arns[k] }])
     }
     gateway = {
       cpu = 512, memory = 1024, image = local.gateway_image, port = 4000, command = null
@@ -273,7 +277,19 @@ locals {
       cpu     = 512, memory = 1024, image = local.api_image, port = null
       command = ["python", "ingest_worker.py"]
       env     = local.common_env
-      secrets = concat(local.db_secrets, [{ name = "LLM_GATEWAY_KEY", valueFrom = var.secret_arns["LLM_GATEWAY_KEY"] }])
+      secrets = concat(local.db_secrets, [for k in ["LLM_GATEWAY_KEY", "GUARD_TOKEN"] : { name = k, valueFrom = var.secret_arns[k] }])
+    }
+    # Prompt-injection classifier (services/guard): model baked into the image, no network needed.
+    guard = {
+      cpu     = 1024, memory = 2048, image = local.guard_image, port = 8002, command = null
+      env     = [{ name = "APP_ENV", value = var.environment }]
+      secrets = [{ name = "GUARD_TOKEN", valueFrom = var.secret_arns["GUARD_TOKEN"] }]
+    }
+    # Upload malware scanning. ClamAV keeps its signature database in memory (~1.5 GB).
+    # The public image is used as-is; mirroring it into ECR is a follow-up.
+    clamav = {
+      cpu = 1024, memory = 3072, image = "clamav/clamav:1.5.4", port = 3310, command = null
+      env = [], secrets = []
     }
   }
 }
@@ -332,7 +348,7 @@ resource "aws_ecs_task_definition" "job" {
 
 locals {
   public_services = { web = var.web_target_group_arn, api = var.api_target_group_arn }
-  service_connect = toset(["orchestrator", "gateway"]) # discoverable as http://<name>:<port>
+  service_connect = toset(["orchestrator", "gateway", "guard", "clamav"]) # discoverable as <name>:<port>
 }
 
 resource "aws_ecs_service" "svc" {

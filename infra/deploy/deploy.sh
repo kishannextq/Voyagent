@@ -11,7 +11,7 @@
 set -euo pipefail
 
 : "${CLUSTER:?}" "${SUBNETS:?}" "${SECURITY_GROUP:?}" "${IMAGE_TAG:?}" "${HEALTH_URL:?}"
-: "${ECR_API:?}" "${ECR_WEB:?}" "${ECR_GATEWAY:?}"
+: "${ECR_API:?}" "${ECR_WEB:?}" "${ECR_GATEWAY:?}" "${ECR_GUARD:?}"
 
 declare -A IMAGE=(
   [web]="$ECR_WEB:$IMAGE_TAG"
@@ -19,8 +19,10 @@ declare -A IMAGE=(
   [orchestrator]="$ECR_API:$IMAGE_TAG"
   [ingest]="$ECR_API:$IMAGE_TAG"
   [gateway]="$ECR_GATEWAY:$IMAGE_TAG"
+  [guard]="$ECR_GUARD:$IMAGE_TAG"
 )
-ORDER=(gateway orchestrator ingest api web)   # backends first, public entry points last
+# Backends first, public entry points last. clamav runs a pinned public image and isn't rolled here.
+ORDER=(guard gateway orchestrator ingest api web)
 declare -A PREVIOUS=()
 
 log() { printf '%s %s\n' "$(date -u +%H:%M:%SZ)" "$*"; }

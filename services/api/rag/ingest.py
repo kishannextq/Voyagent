@@ -5,6 +5,7 @@ import hashlib
 import logging
 import os
 
+import guard_client
 import metrics
 from rag import chunking, embeddings, extract
 from rag.store import DocumentRecord, RagStore
@@ -34,14 +35,17 @@ async def process(store: RagStore, doc_id: str, embedder: embeddings.Embedder | 
             parent_size=int(os.getenv("RAG_PARENT_CHARS", "2000")),
             child_size=int(os.getenv("RAG_CHILD_CHARS", "400")),
         )
+        flagged = await _screen_chunks(parents)
         children = [c for p in parents for c in p.children]
+        if not children:
+            raise extract.Rejected("All of the document's content was withheld by the content policy")
         vectors: list[list[float]] = []
         for i in range(0, len(children), EMBED_BATCH):
             vectors.extend(await embedder.embed(children[i : i + EMBED_BATCH]))
         it = iter(vectors)
         payload = [(p.text, [(c, next(it)) for c in p.children]) for p in parents]
         await store.replace_chunks(doc_id, tenant_id, embedder.model_id, payload)
-        await store.set_status(doc_id, "ready", chunk_count=len(children))
+        await store.set_status(doc_id, "ready", chunk_count=len(children), flagged_chunks=flagged)
         metrics.rag_ingests.labels("ready").inc()
         log.info("document_ingested", extra={"document_id": doc_id, "chunks": len(children), "model": embedder.model_id})
     except extract.Rejected as e:
@@ -52,6 +56,32 @@ async def process(store: RagStore, doc_id: str, embedder: embeddings.Embedder | 
         await store.set_status(doc_id, "failed", error="Processing failed")
         metrics.rag_ingests.labels("failed").inc()
         log.exception("document_ingest_failed", extra={"document_id": doc_id, "error_type": type(e).__name__})
+
+
+async def _screen_chunks(parents) -> int:
+    """Classify every chunk. A passage (parent) with any flagged chunk is withheld entirely: chunks
+    overlap, so injected text can straddle a chunk boundary and survive in a neighbour or in the
+    parent the model reads. Returns the number of chunks withheld."""
+    if not guard_client.enabled():
+        return 0
+    children = [c for p in parents for c in p.children]
+    try:
+        verdicts = await guard_client.classify(children)
+    except guard_client.GuardUnavailable:
+        if guard_client.fail_closed():
+            raise extract.Rejected("Content screening is unavailable; please upload again later") from None
+        return 0
+    flagged = {c for c, bad in zip(children, verdicts, strict=True) if bad}
+    kept, withheld = [], 0
+    for p in parents:
+        if any(c in flagged for c in p.children):
+            withheld += len(p.children)
+        else:
+            kept.append(p)
+    parents[:] = kept
+    if withheld:
+        log.warning("document_chunks_flagged", extra={"flagged": len(flagged), "withheld": withheld})
+    return withheld
 
 
 class Queue:

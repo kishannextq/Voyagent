@@ -111,9 +111,9 @@ module "services" {
   cognito_client_id     = module.auth.client_id
   forwarded_allow_ips   = module.network.cidr
   desired = var.production_sizing ? {
-    web = 2, api = 3, orchestrator = 3, gateway = 2, ingest = 2
+    web = 2, api = 3, orchestrator = 3, gateway = 2, ingest = 2, guard = 2, clamav = 2
     } : {
-    web = 1, api = 1, orchestrator = 1, gateway = 1, ingest = 1
+    web = 1, api = 1, orchestrator = 1, gateway = 1, ingest = 1, guard = 1, clamav = 1
   }
 }
 

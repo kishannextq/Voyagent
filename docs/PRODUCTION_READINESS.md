@@ -15,13 +15,14 @@ real provider credentials, plus a few engineering gaps. Nothing has been deploye
 | B2 | Never run with real models/tools | All runs used mock mode; live Groq/Tavily/AviationStack/OpenWeather paths are only unit-tested | Provide keys in staging Secrets Manager; run e2e + load in live mode |
 | B3 | Leaked `VERCEL_OIDC_TOKEN` in the public `backend` branch history (F1) | Credential exposure | Rotate the token; decide on history rewrite |
 | B4 | Live Vercel site (`frontend` branch) runs Next.js 14 with critical advisories (F14) | Exploitable today | Ship `apps/web` (Next.js 15) or patch the old branch |
-| B5 | Prompt-injection defences are partial (F5): deterministic rails catch 2/15 held-out attacks | Model can still be steered; structural controls limit the damage | Enable a model-based classifier (Bedrock Guardrails prompt-attack filter) |
-| B6 | Uploads need a malware scanner (`RAG_REQUIRE_SCAN=true` refuses uploads without one) | Document upload is disabled in AWS until then | Deploy a scanner (e.g. ClamAV service) and set `MALWARE_SCAN_URL` |
+| ~~B5~~ | ~~Prompt-injection defences partial~~ **Closed 2026-11-26**: model-based classifier added (held-out 13/15 with rules + classifier; 2/45 benign false positives) | Residual risk stays in the register | — |
+| ~~B6~~ | ~~Uploads need a malware scanner~~ **Closed 2026-11-26**: ClamAV service (compose `safety` profile, ECS service in Terraform), fail-closed, EICAR detected in CI | — | — |
 
 ## Verified (with evidence)
 
 | Area | What | Evidence |
 |---|---|---|
+| Content safety | Injection classifier and ClamAV with real services | CI `safety` job (model quality gate, EICAR detection, Trivy) |
 | Functional | Plan → review → approve/revise, guardrail block, injection refusal | 226 API tests; Playwright e2e (8 tests) on real web builds |
 | Auth | PKCE sign-in, bearer tokens, ownership (owner/tenant admin), 401/404 semantics | 26 auth tests (locally signed RS256 tokens); browser run against `tools/mock-oidc` |
 | Accessibility | WCAG 2.1 A/AA (axe) on home, review, final views: 0 violations | e2e `a11y.spec.ts` |
@@ -77,7 +78,7 @@ Alerts for these exist (`infra/observability/prometheus/alerts.yml`); routing is
 
 | Risk | Impact | Mitigation in place | Next step |
 |---|---|---|---|
-| Prompt injection via user text, documents or tool output | Wrong/unsafe plan content | Input rails, output canary, delimited data, least-privilege tools, no secrets reachable | Model-based classifier (B5) |
+| Prompt injection via user text, documents or tool output | Wrong/unsafe plan content | Rules + model classifier on input, tool results and documents; output canary; delimited data; least-privilege tools; no secrets reachable | Multilingual classifier; Bedrock Guardrails as a second model; periodic red-team set refresh |
 | Provider outage / rate limits | Plans degrade to demo data | Gateway fallbacks + retries, per-run fallback with UI notice | Second provider (Bedrock) in the fallback chain |
 | Cost runaway | Spend | Gateway virtual-key budget, per-user budget, per-run LLM-call cap, rate limits | Spend alerts per tenant |
 | Tokens in `sessionStorage` (F16) | Token theft if XSS | No third-party scripts, React escaping | BFF with httpOnly cookies; CSP |

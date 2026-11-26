@@ -64,6 +64,16 @@ Libraries (in-process, shared via a `packages/` workspace): `guardrails`, `promp
   (fallback, alias routing, unknown keys refused, virtual-key model scoping, end-user spend and
   budget enforcement). Not verified: real Groq traffic through the gateway, Bedrock.
 
+## guard and clamav
+
+- **guard** (`services/guard`, own image): prompt-injection classifier
+  `protectai/deberta-v3-base-prompt-injection-v2` (Apache-2.0) as ONNX, revision
+  `90c9989b…` with SHA-256 checks at build; no network at runtime; `X-Internal-Token`.
+  ~45 ms per text on 1 vCPU; long texts scored in overlapping 512-token windows (max score).
+  Callers: api (requests, feedback), orchestrator (live tool results), ingest worker (chunks).
+- **clamav** (`clamav/clamav:1.5.4`): upload malware scanning over clamd INSTREAM on 3310;
+  signatures refreshed by freshclam; ~1.5 GB RAM. Not public; reached via Service Connect.
+
 ## orchestrator details
 
 - One image, two deployables: `uvicorn server:api` (public api) and `uvicorn orchestrator_app:app`

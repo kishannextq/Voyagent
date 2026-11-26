@@ -35,6 +35,7 @@ class DocumentRecord:
     chunk_count: int = 0
     error: str | None = None
     created_at: dt.datetime | None = None
+    flagged_chunks: int = 0
 
 
 @dataclass
@@ -53,7 +54,9 @@ class RagStore(Protocol):
     ) -> tuple[DocumentRecord, bool]: ...
     async def get_document(self, tenant_id: str, doc_id: str) -> DocumentRecord | None: ...
     async def load_content(self, doc_id: str) -> tuple[str, str, bytes]: ...
-    async def set_status(self, doc_id: str, status: str, error: str | None = None, chunk_count: int = 0) -> None: ...
+    async def set_status(
+        self, doc_id: str, status: str, error: str | None = None, chunk_count: int = 0, flagged_chunks: int = 0
+    ) -> None: ...
     async def replace_chunks(self, doc_id: str, tenant_id: str, model_id: str, parents: list) -> None: ...
     async def list_documents(self, tenant_id: str) -> list[DocumentRecord]: ...
     async def delete_document(self, tenant_id: str, doc_id: str) -> bool: ...
@@ -97,10 +100,10 @@ class MemoryRagStore:
         d = self._docs[doc_id]
         return d.tenant_id, d.mime, self._content[doc_id]
 
-    async def set_status(self, doc_id, status, error=None, chunk_count=0):
+    async def set_status(self, doc_id, status, error=None, chunk_count=0, flagged_chunks=0):
         with self._lock:
             d = self._docs[doc_id]
-            d.status, d.error, d.chunk_count = status, error, chunk_count
+            d.status, d.error, d.chunk_count, d.flagged_chunks = status, error, chunk_count, flagged_chunks
             if status == "ready":
                 for other in self._docs.values():
                     if other.tenant_id == d.tenant_id and other.title == d.title and other.version < d.version:
@@ -225,13 +228,13 @@ class PostgresRagStore:
             row = await cur.fetchone()
         return row["tenant_id"], row["mime"], bytes(row["content"])
 
-    async def set_status(self, doc_id, status, error=None, chunk_count=0):
+    async def set_status(self, doc_id, status, error=None, chunk_count=0, flagged_chunks=0):
         async with self._pool.connection() as conn:
             async with conn.transaction():
                 cur = await conn.execute(
-                    "UPDATE rag.documents SET status = %s, error = %s, chunk_count = %s, updated_at = now() "
-                    "WHERE id = %s RETURNING tenant_id, title, version",
-                    (status, error, chunk_count, doc_id),
+                    "UPDATE rag.documents SET status = %s, error = %s, chunk_count = %s, flagged_chunks = %s, "
+                    "updated_at = now() WHERE id = %s RETURNING tenant_id, title, version",
+                    (status, error, chunk_count, flagged_chunks, doc_id),
                 )
                 row = await cur.fetchone()
                 if status == "ready" and row:
@@ -316,7 +319,7 @@ class PostgresRagStore:
 def _doc(r: dict) -> DocumentRecord:
     return DocumentRecord(
         str(r["id"]), r["tenant_id"], r["title"], r["mime"], r["sha256"], r["version"], r["status"], r["scan"],
-        r["chunk_count"], r["error"], r["created_at"],
+        r["chunk_count"], r["error"], r["created_at"], r.get("flagged_chunks", 0),
     )
 
 

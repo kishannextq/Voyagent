@@ -4,5 +4,11 @@
 #
 # secrets: only what that agent uses. timeout_seconds: from services/api/agents/<name>.md.
 locals {
-  agents = {}
+  agents = {
+    supervisor = {
+      cpu = 256, memory = 512, min = 1, max = var.production_sizing ? 10 : 3
+      timeout_seconds = 30, database = false
+      secrets         = ["LLM_GATEWAY_KEY"]
+    }
+  }
 }

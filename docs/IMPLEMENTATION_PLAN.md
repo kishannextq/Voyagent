@@ -85,6 +85,7 @@ Updated continuously. `[x]` = implemented and verified (how is noted); `[ ]` = n
 - [x] Runtime: `agent_bus.py` (versioned task/result contract, SQS tasks + Redis results, at-most-once claims, deadlines, trace propagation, budgets carried across services), `agent_worker.py` (concurrency, drain on SIGTERM, heartbeat health check), `REMOTE_AGENTS` switch per agent
 - [x] Terraform: per-agent SQS queue + DLQ (KMS, TLS-only), consume-only task role, ECS service, target tracking on queue depth, DLQ and backlog-age alarms; orchestrator send-only policy. Not applied
 - [x] Local stack (`docker-compose.agents.yml`, ElasticMQ) and CI `agents` job (real SQS API + Redis tests; scale-out and queue-durability checks)
+- [x] `supervisor` as its own service (`feature/agent-supervisor`): secrets LLM_GATEWAY_KEY; timeout 30 s; 256 CPU units / 512 MB; 1-3 tasks (staging), up to 10 (production)
 - [ ] One branch per agent: supervisor, flight, hotel, weather, budget, itinerary
 
 ## Dependency order

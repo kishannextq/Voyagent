@@ -29,7 +29,7 @@ jobs:
         with:
           filters: |
             web: ['apps/web/**', 'tests/e2e/**', '.github/workflows/ci.yml']
-            api: ['services/api/**', 'tests/load/**', 'infra/resilience/**', 'tools/**', 'docker-compose.yml', '.github/workflows/ci.yml']
+            api: ['services/api/**', 'tests/load/**', 'infra/resilience/**', 'infra/elasticmq/**', 'tools/**', 'docker-compose.yml', 'docker-compose.agents.yml', '.github/workflows/ci.yml']
             guard: ['services/guard/**', '.github/workflows/ci.yml']
             infra: ['infra/terraform/**', 'infra/deploy/**', '.github/workflows/**']
             observability: ['infra/observability/**', 'docker-compose.yml', '.github/workflows/ci.yml']
@@ -301,6 +301,51 @@ jobs:
       - name: Stack logs
         if: failure()
         run: docker compose logs --tail 80 api orchestrator postgres
+
+  # Agents as separate services: real ElasticMQ (SQS API) + Redis for the transport tests, then
+  # the compose stack with one container per agent (scale-out and queue durability checks).
+  agents:
+    needs: changes
+    if: needs.changes.outputs.api == 'true'
+    runs-on: ubuntu-latest
+    env:
+      MOCK_DELAY: "0.2"
+      RATE_LIMIT_ENABLED: "false"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+        with:
+          version: "0.13.7"
+          enable-cache: true
+          cache-dependency-glob: services/api/uv.lock
+      - name: Start SQS (ElasticMQ) and Redis
+        run: docker compose -f docker-compose.yml -f docker-compose.agents.yml up -d sqs redis
+      - name: Transport tests against real SQS API + Redis
+        working-directory: services/api
+        env:
+          SQS_TEST_ENDPOINT: http://127.0.0.1:9324
+          REDIS_TEST_URL: redis://127.0.0.1:6379/0
+        run: |
+          uv sync --frozen
+          uv run pytest -q -rs tests/test_agent_bus.py
+      - name: Start stack with agent services
+        run: |
+          set -euo pipefail
+          compose="docker compose -f docker-compose.yml -f docker-compose.agents.yml"
+          agents=$($compose config --services | grep '^agent-' || true)
+          echo "agent services: ${agents:-none}"
+          # shellcheck disable=SC2086
+          $compose up -d --build postgres redis sqs migrate orchestrator api $agents
+          for _ in $(seq 1 60); do curl -sf http://127.0.0.1:8000/api/v1/health > /dev/null && break; sleep 3; done
+          curl -sf http://127.0.0.1:8000/api/v1/health
+      - name: Plan, scale-out and queue durability checks
+        run: |
+          set -o pipefail
+          python3 infra/resilience/agents_check.py | tee agents.txt
+          { echo "## Agents as services"; echo '```'; cat agents.txt; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
+      - name: Stack logs
+        if: failure()
+        run: docker compose -f docker-compose.yml -f docker-compose.agents.yml logs --tail 60
 
   # Content safety with the real services: the injection classifier image (model pinned and
   # checksummed at build) and ClamAV detecting the EICAR test file.

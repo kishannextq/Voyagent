@@ -262,7 +262,7 @@ locals {
     orchestrator = {
       cpu     = 1024, memory = 2048, image = local.api_image, port = 8001
       command = ["sh", "-c", "exec uvicorn orchestrator_app:app --host 0.0.0.0 --port 8001"]
-      env     = local.common_env
+      env     = concat(local.common_env, local.remote_agents_env) # agents.tf
       secrets = concat(local.db_secrets, [for k in ["ORCHESTRATOR_TOKEN", "GUARD_TOKEN", "LLM_GATEWAY_KEY", "TAVILY_API_KEY", "AVIATION_STACK_API_KEY", "OPENWEATHER_API_KEY"] : { name = k, valueFrom = var.secret_arns[k] }])
     }
     gateway = {
@@ -487,5 +487,5 @@ output "cluster_name" { value = aws_ecs_cluster.this.name }
 output "app_security_group_id" { value = var.app_security_group_id }
 output "ecr_repository_arns" { value = [for r in aws_ecr_repository.this : r.arn] }
 output "ecr_repository_urls" { value = { for k, r in aws_ecr_repository.this : k => r.repository_url } }
-output "role_arns" { value = concat([aws_iam_role.execution.arn], [for r in aws_iam_role.task : r.arn]) }
+output "role_arns" { value = concat([aws_iam_role.execution.arn], [for r in aws_iam_role.task : r.arn], [for r in aws_iam_role.agent : r.arn]) }
 output "migrate_task_definition" { value = aws_ecs_task_definition.job["migrate"].family }

@@ -110,6 +110,7 @@ module "services" {
   cognito_issuer        = module.auth.issuer
   cognito_client_id     = module.auth.client_id
   forwarded_allow_ips   = module.network.cidr
+  agents                = local.agents # envs/agents.tf
   desired = var.production_sizing ? {
     web = 2, api = 3, orchestrator = 3, gateway = 2, ingest = 2, guard = 2, clamav = 2
     } : {
@@ -138,3 +139,4 @@ output "cognito" {
 output "ecr" { value = module.services.ecr_repository_urls }
 output "deploy_role_arn" { value = module.ci.deploy_role_arn }
 output "cluster_name" { value = module.services.cluster_name }
+output "agent_queue_urls" { value = module.services.agent_queue_urls }

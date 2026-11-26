@@ -81,6 +81,12 @@ Updated continuously. `[x]` = implemented and verified (how is noted); `[ ]` = n
 - [x] Failure injection (orchestrator crash, Redis down, Postgres restart) and backup/restore drill with a paused plan resumed from the restore — CI `resilience` job; found and fixed 4 resilience bugs
 - [x] Production-readiness review: `docs/PRODUCTION_READINESS.md` — **verdict: not production-ready** until the listed blockers (AWS environment, live-model run, token rotation, legacy site upgrade, model-based injection classifier, upload scanner) are closed
 
+## Phase 10 — Agents as separate services (SQS)  (`feature/agent-runtime`, then one branch per agent)
+- [x] Runtime: `agent_bus.py` (versioned task/result contract, SQS tasks + Redis results, at-most-once claims, deadlines, trace propagation, budgets carried across services), `agent_worker.py` (concurrency, drain on SIGTERM, heartbeat health check), `REMOTE_AGENTS` switch per agent
+- [x] Terraform: per-agent SQS queue + DLQ (KMS, TLS-only), consume-only task role, ECS service, target tracking on queue depth, DLQ and backlog-age alarms; orchestrator send-only policy. Not applied
+- [x] Local stack (`docker-compose.agents.yml`, ElasticMQ) and CI `agents` job (real SQS API + Redis tests; scale-out and queue-durability checks)
+- [ ] One branch per agent: supervisor, flight, hotel, weather, budget, itinerary
+
 ## Dependency order
 
 ```

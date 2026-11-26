@@ -22,6 +22,7 @@ from langchain_core.messages import HumanMessage
 from langgraph.types import Command
 from opentelemetry import propagate
 
+import agent_bus
 import graph
 import keys
 import logging_setup
@@ -138,6 +139,12 @@ class LocalOrchestrator:
             docs = await rag_store.open_store(os.getenv("DATABASE_URL"))
             closers.append(docs.aclose)
             rag_tool.configure(docs)
+            # Agents listed in REMOTE_AGENTS run as their own services (agent_bus.py).
+            bus = await agent_bus.open_transport(redis)
+            agent_bus.configure(bus)
+            if bus is not None:
+                closers.append(bus.aclose)
+                log.info("remote_agents", extra={"agents": sorted(agent_bus.remote_agents())})
             travel_graph, close_graph = await graph.open_graph()
         except BaseException:
             for c in closers:

@@ -42,6 +42,15 @@ services:
   orchestrator:
     environment:
       <<: *sqs-env
-      REMOTE_AGENTS: ""
+      REMOTE_AGENTS: "supervisor"
     depends_on:
       sqs: { condition: service_started }
+
+  agent-supervisor:   # supervisor: validates the request and picks the agents
+    <<: *agent
+    command: ["python", "agent_worker.py", "supervisor"]
+    environment:
+      <<: *sqs-env
+      LLM_GATEWAY_URL: ${LLM_GATEWAY_URL:-}
+      LLM_GATEWAY_KEY: ${LLM_GATEWAY_KEY:-}
+      GROQ_API_KEY: ${GROQ_API_KEY:-}

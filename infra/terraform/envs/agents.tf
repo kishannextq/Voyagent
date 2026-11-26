@@ -15,5 +15,10 @@ locals {
       timeout_seconds = 60, database = false
       secrets         = ["AVIATION_STACK_API_KEY", "LLM_GATEWAY_KEY", "GUARD_TOKEN"]
     }
+    hotel_agent = {
+      cpu             = 256, memory = 512, min = 1, max = var.production_sizing ? 10 : 3
+      timeout_seconds = 45, database = false
+      secrets         = ["TAVILY_API_KEY", "GUARD_TOKEN"]
+    }
   }
 }

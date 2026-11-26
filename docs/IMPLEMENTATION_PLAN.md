@@ -88,6 +88,7 @@ Updated continuously. `[x]` = implemented and verified (how is noted); `[ ]` = n
 - [x] `supervisor` as its own service (`feature/agent-supervisor`): secrets LLM_GATEWAY_KEY; timeout 30 s; 256 CPU units / 512 MB; 1-3 tasks (staging), up to 10 (production)
 - [x] `flight_agent` as its own service (`feature/agent-flight`): secrets AVIATION_STACK_API_KEY, LLM_GATEWAY_KEY, GUARD_TOKEN; timeout 60 s; 512 CPU units / 1024 MB; 1-3 tasks (staging), up to 10 (production)
 - [x] `hotel_agent` as its own service (`feature/agent-hotel`): secrets TAVILY_API_KEY, GUARD_TOKEN; timeout 45 s; 256 CPU units / 512 MB; 1-3 tasks (staging), up to 10 (production)
+- [x] `weather_agent` as its own service (`feature/agent-weather`): secrets OPENWEATHER_API_KEY, GUARD_TOKEN; timeout 45 s; 256 CPU units / 512 MB; 1-3 tasks (staging), up to 10 (production)
 - [ ] One branch per agent: supervisor, flight, hotel, weather, budget, itinerary
 
 ## Dependency order

@@ -10,7 +10,7 @@ variable "agents" {
   type = map(object({
     cpu             = number
     memory          = number
-    min             = number       # >= 1 (target tracking divides by running tasks)
+    min             = number # >= 1 (target tracking divides by running tasks)
     max             = number
     timeout_seconds = number       # timeout_seconds from agents/<name>.md
     secrets         = list(string) # keys of var.secret_arns this agent needs, nothing else

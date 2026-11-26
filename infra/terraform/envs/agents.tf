@@ -30,5 +30,10 @@ locals {
       timeout_seconds = 60, database = true
       secrets         = ["LLM_GATEWAY_KEY"]
     }
+    itinerary_agent = {
+      cpu             = 256, memory = 512, min = 1, max = var.production_sizing ? 10 : 3
+      timeout_seconds = 90, database = true
+      secrets         = ["LLM_GATEWAY_KEY"]
+    }
   }
 }

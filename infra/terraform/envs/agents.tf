@@ -25,5 +25,10 @@ locals {
       timeout_seconds = 45, database = false
       secrets         = ["OPENWEATHER_API_KEY", "GUARD_TOKEN"]
     }
+    budget_agent = {
+      cpu             = 256, memory = 512, min = 1, max = var.production_sizing ? 10 : 3
+      timeout_seconds = 60, database = true
+      secrets         = ["LLM_GATEWAY_KEY"]
+    }
   }
 }

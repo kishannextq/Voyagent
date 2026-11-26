@@ -42,7 +42,7 @@ services:
   orchestrator:
     environment:
       <<: *sqs-env
-      REMOTE_AGENTS: "supervisor,flight_agent,hotel_agent"
+      REMOTE_AGENTS: "supervisor,flight_agent,hotel_agent,weather_agent"
     depends_on:
       sqs: { condition: service_started }
 
@@ -73,5 +73,14 @@ services:
     environment:
       <<: *sqs-env
       TAVILY_API_KEY: ${TAVILY_API_KEY:-}
+      GUARD_URL: ${GUARD_URL:-}
+      GUARD_TOKEN: ${GUARD_TOKEN:-local-only-guard-token}
+
+  agent-weather:   # weather_agent: current weather and forecast
+    <<: *agent
+    command: ["python", "agent_worker.py", "weather_agent"]
+    environment:
+      <<: *sqs-env
+      OPENWEATHER_API_KEY: ${OPENWEATHER_API_KEY:-}
       GUARD_URL: ${GUARD_URL:-}
       GUARD_TOKEN: ${GUARD_TOKEN:-local-only-guard-token}

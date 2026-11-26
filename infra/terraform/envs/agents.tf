@@ -20,5 +20,10 @@ locals {
       timeout_seconds = 45, database = false
       secrets         = ["TAVILY_API_KEY", "GUARD_TOKEN"]
     }
+    weather_agent = {
+      cpu             = 256, memory = 512, min = 1, max = var.production_sizing ? 10 : 3
+      timeout_seconds = 45, database = false
+      secrets         = ["OPENWEATHER_API_KEY", "GUARD_TOKEN"]
+    }
   }
 }

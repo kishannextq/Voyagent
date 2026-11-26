@@ -42,7 +42,7 @@ services:
   orchestrator:
     environment:
       <<: *sqs-env
-      REMOTE_AGENTS: "supervisor"
+      REMOTE_AGENTS: "supervisor,flight_agent"
     depends_on:
       sqs: { condition: service_started }
 
@@ -54,3 +54,15 @@ services:
       LLM_GATEWAY_URL: ${LLM_GATEWAY_URL:-}
       LLM_GATEWAY_KEY: ${LLM_GATEWAY_KEY:-}
       GROQ_API_KEY: ${GROQ_API_KEY:-}
+
+  agent-flight:   # flight_agent: airports, airlines, flight guidance
+    <<: *agent
+    command: ["python", "agent_worker.py", "flight_agent"]
+    environment:
+      <<: *sqs-env
+      LLM_GATEWAY_URL: ${LLM_GATEWAY_URL:-}
+      LLM_GATEWAY_KEY: ${LLM_GATEWAY_KEY:-}
+      GROQ_API_KEY: ${GROQ_API_KEY:-}
+      AVIATION_STACK_API_KEY: ${AVIATION_STACK_API_KEY:-}
+      GUARD_URL: ${GUARD_URL:-}
+      GUARD_TOKEN: ${GUARD_TOKEN:-local-only-guard-token}

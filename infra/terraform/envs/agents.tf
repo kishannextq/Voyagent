@@ -10,5 +10,10 @@ locals {
       timeout_seconds = 30, database = false
       secrets         = ["LLM_GATEWAY_KEY"]
     }
+    flight_agent = {
+      cpu             = 512, memory = 1024, min = 1, max = var.production_sizing ? 10 : 3
+      timeout_seconds = 60, database = false
+      secrets         = ["AVIATION_STACK_API_KEY", "LLM_GATEWAY_KEY", "GUARD_TOKEN"]
+    }
   }
 }

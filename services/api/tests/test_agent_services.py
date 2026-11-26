@@ -20,7 +20,11 @@ COMPOSE = yaml.safe_load((ROOT / "docker-compose.agents.yml").read_text(encoding
 ELASTICMQ = (ROOT / "infra/elasticmq/elasticmq.conf").read_text(encoding="utf-8")
 TF = (ROOT / "infra/terraform/envs/agents.tf").read_text(encoding="utf-8")
 
-TOOL_KEYS = {"aviationstack": "AVIATION_STACK_API_KEY", "tavily": "TAVILY_API_KEY", "openweather": "OPENWEATHER_API_KEY"}
+TOOL_KEYS = {
+    "aviationstack": "AVIATION_STACK_API_KEY",
+    "tavily": "TAVILY_API_KEY",
+    "openweather": "OPENWEATHER_API_KEY",
+}
 PROVIDER_KEYS = {*TOOL_KEYS.values(), "GROQ_API_KEY", "LLM_GATEWAY_KEY"}
 
 

@@ -6,7 +6,7 @@
 locals {
   agents = {
     supervisor = {
-      cpu = 256, memory = 512, min = 1, max = var.production_sizing ? 10 : 3
+      cpu             = 256, memory = 512, min = 1, max = var.production_sizing ? 10 : 3
       timeout_seconds = 30, database = false
       secrets         = ["LLM_GATEWAY_KEY"]
     }

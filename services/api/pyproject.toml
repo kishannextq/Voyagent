@@ -32,6 +32,7 @@ dependencies = [
     "opentelemetry-instrumentation-fastapi==0.66b2",
     "opentelemetry-instrumentation-httpx==0.66b2",
     "prometheus-client==0.26.0",
+    "boto3==1.44.0",  # SQS transport for remote agents (agent_bus.py)
 ]
 
 [dependency-groups]

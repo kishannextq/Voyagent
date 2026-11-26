@@ -9,6 +9,7 @@ from langgraph.graph import END, START, StateGraph
 from psycopg.rows import dict_row
 from psycopg_pool import AsyncConnectionPool
 
+import agent_bus
 import agent_config
 import settings
 from agents import (
@@ -75,12 +76,12 @@ def route_after_agent(current_agent: str):
 def build_graph(checkpointer):
     graph = StateGraph(TravelState)
 
-    graph.add_node("supervisor", agent_config.wrap("supervisor", supervisor_agent))
-    graph.add_node("flight_agent", agent_config.wrap("flight_agent", flight_agent))
-    graph.add_node("hotel_agent", agent_config.wrap("hotel_agent", hotel_agent))
-    graph.add_node("weather_agent", agent_config.wrap("weather_agent", weather_agent))
-    graph.add_node("budget_agent", agent_config.wrap("budget_agent", budget_agent))
-    graph.add_node("itinerary_agent", agent_config.wrap("itinerary_agent", itinerary_agent))
+    graph.add_node("supervisor", agent_bus.node("supervisor", supervisor_agent))
+    graph.add_node("flight_agent", agent_bus.node("flight_agent", flight_agent))
+    graph.add_node("hotel_agent", agent_bus.node("hotel_agent", hotel_agent))
+    graph.add_node("weather_agent", agent_bus.node("weather_agent", weather_agent))
+    graph.add_node("budget_agent", agent_bus.node("budget_agent", budget_agent))
+    graph.add_node("itinerary_agent", agent_bus.node("itinerary_agent", itinerary_agent))
     graph.add_node("human_approval", agent_config.wrap("human_approval", human_approval_agent))
     graph.add_node("final_response", agent_config.wrap("final_response", final_response_agent))
 

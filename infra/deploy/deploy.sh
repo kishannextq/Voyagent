@@ -21,8 +21,13 @@ declare -A IMAGE=(
   [gateway]="$ECR_GATEWAY:$IMAGE_TAG"
   [guard]="$ECR_GUARD:$IMAGE_TAG"
 )
+# Agent services (agent-*, one per agent running on its own; infra/terraform/envs/agents.tf) run the
+# api image. They go before the orchestrator: the task message contract is versioned (agent_bus.py).
+mapfile -t AGENTS < <(aws ecs list-services --cluster "$CLUSTER" --query 'serviceArns[]' --output text \
+  | tr '\t' '\n' | sed 's#.*/##' | grep '^agent-' || true)
+for a in "${AGENTS[@]}"; do IMAGE[$a]="$ECR_API:$IMAGE_TAG"; done
 # Backends first, public entry points last. clamav runs a pinned public image and isn't rolled here.
-ORDER=(guard gateway orchestrator ingest api web)
+ORDER=(guard gateway "${AGENTS[@]}" orchestrator ingest api web)
 declare -A PREVIOUS=()
 
 log() { printf '%s %s\n' "$(date -u +%H:%M:%SZ)" "$*"; }

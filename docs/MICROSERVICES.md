@@ -11,6 +11,7 @@ scaling, deploy cadence, or a security boundary (ARCHITECTURE.md D2/D3).
 | `model-gateway` | **done** (`services/model-gateway`) | LiteLLM proxy: routing, fallback, keys, cache, spend | own database `litellm`: keys, budgets, spend logs | Groq (Bedrock configured, not enabled) |
 | `rag` | **done as a library** (`services/api/rag/`, used by api + orchestrator) | Retrieval, reranking, citations | `rag` schema: documents, parents, chunks | model-gateway (embeddings) |
 | `ingest-worker` | **done** (`ingest_worker.py`, same image) | Async document pipeline from a Redis queue (SQS planned) | writes `rag` schema | model-gateway |
+| `agent-<name>` | **runtime done** (`agent_worker.py`, same image); agents enabled one per branch | One service per planning agent, fed by its own SQS queue, scaled on queue depth | none (stateless) | model-gateway, guard, tools; Postgres only for document-searching agents |
 
 \* `ingest-worker` and `rag` are one bounded context (same schema owner, deployed separately
 because their scaling profiles differ: bursty batch vs latency-sensitive reads).
@@ -84,3 +85,41 @@ Libraries (in-process, shared via a `packages/` workspace): `guardrails`, `promp
 - The api authenticates the user, checks ownership and rate limits, then relays the orchestrator's
   SSE bytes unchanged. Orchestrator full → 503 to the client before any bytes; unreachable → 502.
 - Agent behaviour is configured in `agents/*.md` (see `agent_config.py`).
+
+## Agents as separate services
+
+Each planning agent (supervisor, flight, hotel, weather, budget, itinerary) can run as its own
+service. The orchestrator keeps the plan (graph, checkpoints, approval, streaming); for agents
+listed in `REMOTE_AGENTS` the graph node sends a task instead of running the agent in-process.
+
+```
+orchestrator --SendMessage--> SQS  <env>-<agent>  --ReceiveMessage--> agent-<agent> (N tasks)
+orchestrator <------BLPOP----- Redis voyagent:agent:result:<task> <--RPUSH--
+```
+
+- **Contract** (`agent_bus.py`): versioned Task/Result JSON, unknown fields rejected. A task carries
+  the agent's state (no message history), the run context (end user, tenant, live/mock, fallback,
+  model calls so far), a deadline and the W3C trace context: one trace across services.
+- **Budgets and safety stay enforced**: the worker runs the agent through the same `agent_config`
+  wrapper (tool allow-list, per-agent timeout and model-call budget); the per-plan budget travels
+  with the task. Tool results are still screened by the guard.
+- **Delivery**: at most once. Workers claim a task in Redis before running it, so SQS redelivery
+  never runs an agent twice. Expired tasks are dropped. Malformed messages are discarded. After 3
+  failed deliveries a message goes to the dead-letter queue (alarm).
+- **Scaling**: target tracking on (waiting + in-flight messages) / (tasks × `AGENT_CONCURRENCY`),
+  target 0.7; scale out after 30 s, in after 300 s; min 1 per agent. Workers drain for up to 100 s
+  on SIGTERM and hand unfinished tasks back to the queue.
+- **Least privilege**: each agent's task role can only consume its own queue; the orchestrator can
+  only send. Each agent gets only its own secrets (e.g. the weather agent only the OpenWeather key);
+  only budget and itinerary (document search) get database credentials. Queues are KMS-encrypted
+  and TLS-only.
+- **Failure**: an agent service that is down or overloaded makes the plan fail after the agent's
+  timeout + `AGENT_QUEUE_WAIT_SECONDS` (default 30 s) with a clear error; a task queued while the
+  service restarts is picked up when it returns.
+- **Local**: `docker compose -f docker-compose.yml -f docker-compose.agents.yml up` (ElasticMQ
+  stands in for SQS). Without the override every agent runs in the orchestrator as before.
+- `human_approval` (an interrupt) and `final_response` stay in the orchestrator.
+
+Cost of the split: each task adds a queue hop (tens of ms on SQS long polling, measured in CI) and
+every agent is another service to deploy and watch. It buys per-agent scaling, isolation of
+credentials and failures, and independent deploys.

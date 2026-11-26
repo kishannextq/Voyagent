@@ -1,0 +1,47 @@
+# Agents as separate services: one worker container per agent, tasks over SQS (ElasticMQ
+# locally), results over Redis. See services/api/agent_bus.py.
+#
+#   docker compose -f docker-compose.yml -f docker-compose.agents.yml up --build
+#   docker compose -f docker-compose.yml -f docker-compose.agents.yml up --scale agent-weather=3
+#
+# Agents not listed in REMOTE_AGENTS run inside the orchestrator as before.
+
+x-sqs-env: &sqs-env
+  REDIS_URL: redis://redis:6379/0
+  AWS_ENDPOINT_URL_SQS: http://sqs:9324
+  AWS_DEFAULT_REGION: us-east-1
+  AWS_ACCESS_KEY_ID: local-only          # ElasticMQ ignores credentials
+  AWS_SECRET_ACCESS_KEY: local-only
+  AGENT_QUEUE_PREFIX: voyagent-local-
+  APP_ENV: ${APP_ENV:-local}
+  MOCK_MODE: ${MOCK_MODE:-true}
+  MOCK_DELAY: ${MOCK_DELAY:-0.4}
+  METRICS_PORT: "9464"
+  OTEL_EXPORTER_OTLP_ENDPOINT: ${OTEL_EXPORTER_OTLP_ENDPOINT:-}
+
+x-agent: &agent
+  build: ./services/api
+  restart: unless-stopped
+  stop_grace_period: 110s                 # AGENT_DRAIN_SECONDS + margin
+  healthcheck:
+    test: ["CMD", "python", "agent_worker.py", "--health"]
+    interval: 15s
+    timeout: 3s
+    retries: 3
+  depends_on:
+    redis: { condition: service_healthy }
+    sqs: { condition: service_started }
+
+services:
+  sqs:
+    image: softwaremill/elasticmq-native:1.7.1@sha256:e4580ab9ad1bd5cd37b4ba04911bc5ccc8cd2d9ab4de56ece65acee71c24e05c
+    volumes:
+      - ./infra/elasticmq/elasticmq.conf:/opt/elasticmq.conf:ro
+    ports: ["127.0.0.1:9324:9324", "127.0.0.1:9325:9325"]   # SQS API, stats UI
+
+  orchestrator:
+    environment:
+      <<: *sqs-env
+      REMOTE_AGENTS: ""
+    depends_on:
+      sqs: { condition: service_started }

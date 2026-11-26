@@ -29,6 +29,14 @@ rate_limited = Counter("voyagent_rate_limited_total", "Requests refused by rate 
 rag_searches = Counter("voyagent_rag_searches_total", "Document searches by agents", ["outcome"])  # hits|empty|error
 rag_ingests = Counter("voyagent_rag_ingest_total", "Document ingestion results", ["status"])  # ready|failed
 
+# Remote agents (agent_bus.py): orchestrator side
+agent_remote_calls = Counter("voyagent_agent_remote_calls_total", "Remote agent calls", ["agent", "outcome"])  # ok|no_response|budget|timeout|expired|tool|error
+agent_remote_duration = Histogram("voyagent_agent_remote_duration_seconds", "Remote agent call, enqueue to result", ["agent"], buckets=_LAT)
+agent_queue_wait = Histogram("voyagent_agent_queue_wait_seconds", "Time a task waited in its agent queue", ["agent"], buckets=_LAT)
+# Agent workers (agent_worker.py)
+agent_tasks = Counter("voyagent_agent_tasks_total", "Tasks handled by an agent worker", ["agent", "outcome"])  # ok|error kinds|duplicate|invalid|released
+agent_inflight = Gauge("voyagent_agent_tasks_inflight", "Tasks running in this agent worker", ["agent"])
+
 _started = False
 
 
